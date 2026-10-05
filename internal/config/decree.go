@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// MinDecreeVersion is the oldest decree decree-api works with.
+// MinDecreeVersion is the oldest decree decree-go-rest works with.
 var MinDecreeVersion = [2]int{0, 5}
 
 // decreeTimeout bounds each decree command run during validation.

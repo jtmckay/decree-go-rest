@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jtmckay/decree-api/internal/config"
-	"github.com/jtmckay/decree-api/internal/decreetest"
+	"github.com/jtmckay/decree-go-rest/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/decreetest"
 )
 
 const (
@@ -51,7 +51,7 @@ func write(t *testing.T, path, content string) {
 // lines pointing at proj and the stub, and loads it.
 func load(t *testing.T, proj string, stub *decreetest.Stub, body string) *config.Config {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "decree-api.yml")
+	path := filepath.Join(t.TempDir(), "decree-go-rest.yml")
 	write(t, path, "project: "+proj+"\ndecree: "+stub.Path+"\n"+body)
 	c, err := config.Load(path)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestValidateRules(t *testing.T) {
 	cases := []struct {
 		name  string
 		body  string
-		env   map[string]string // set on top of DECREE_API_SECRET=goodSecret; "-" unsets
+		env   map[string]string // set on top of DECREE_GO_REST_SECRET=goodSecret; "-" unsets
 		setup func(t *testing.T, proj string, stub *decreetest.Stub)
 		want  []want
 	}{
@@ -159,12 +159,12 @@ func TestValidateRules(t *testing.T) {
     message: { machine: notify }
 `},
 		{name: "path: under /runs/", body: "endpoints:\n  - path: /runs/x\n    message: { machine: notify }\n", want: []want{{"/runs/x", config.RulePath, "under /runs/"}}},
-		{name: "path: /runs/ free when its built-ins are off", body: "builtins: { status: false, replies: false }\nendpoints:\n  - path: /runs/x\n    message: { machine: notify }\n"},
+		{name: "path: /runs/ free when its built-ins are off", body: "builtins: { status: { enabled: false }, replies: { enabled: false } }\nendpoints:\n  - path: /runs/x\n    message: { machine: notify }\n"},
 		{name: "path: /healthz", body: "endpoints:\n  - path: /healthz\n    message: { machine: notify }\n", want: []want{{"/healthz", config.RulePath, "under /healthz"}}},
 		{name: "path: /openapi.json", body: "endpoints:\n  - path: /openapi.json\n    message: { machine: notify }\n", want: []want{{"/openapi.json", config.RulePath, "under /openapi.json"}}},
 		{name: "path: conflicts with a built-in", body: "endpoints:\n  - path: /{a}/{b}/{c}/x\n    message: { machine: notify, params: { title: '{{a}}{{b}}{{c}}' } }\n",
 			want: []want{{"/{a}/{b}/{c}/x", config.RulePath, "conflicts with a built-in endpoint"}}},
-		{name: "path: no conflict when that built-in is off", body: "builtins: { replies: false }\nendpoints:\n  - path: /{a}/{b}/{c}/x\n    message: { machine: notify, params: { title: '{{a}}{{b}}{{c}}' } }\n"},
+		{name: "path: no conflict when that built-in is off", body: "builtins: { replies: { enabled: false } }\nendpoints:\n  - path: /{a}/{b}/{c}/x\n    message: { machine: notify, params: { title: '{{a}}{{b}}{{c}}' } }\n"},
 		{name: "path: wildcards beside the built-ins pass", body: `endpoints:
   - path: /{a}
     message: { machine: notify, params: { title: '{{a}}' } }
@@ -173,7 +173,7 @@ func TestValidateRules(t *testing.T) {
   - path: /{a}/{b}/{c}
     message: { machine: notify, params: { title: '{{a}}{{b}}{{c}}' } }
 `},
-		{name: "path: /openapi.json free when openapi is off", body: "builtins: { openapi: false }\nendpoints:\n  - path: /openapi.json\n    message: { machine: notify }\n"},
+		{name: "path: /openapi.json free when openapi is off", body: "builtins: { openapi: { enabled: false } }\nendpoints:\n  - path: /openapi.json\n    message: { machine: notify }\n"},
 
 		// Step 2: patterns.
 		{name: "patterns: valid", body: "endpoints:\n  - path: /n/{t}\n    patterns: { t: '[a-z]+' }\n    message: { machine: notify, params: { title: '{{t}}' } }\n"},
@@ -225,23 +225,51 @@ func TestValidateRules(t *testing.T) {
 			want: []want{{"/notify", config.RuleParams, "cannot read its data"}}},
 
 		// Step 6: secrets.
-		{name: "secrets: default unset", body: ok, env: map[string]string{"DECREE_API_SECRET": "-"},
+		{name: "secrets: default unset", body: ok, env: map[string]string{"DECREE_GO_REST_SECRET": "-"},
 			want: []want{
-				{"/notify", config.RuleSecrets, "DECREE_API_SECRET is not set"},
-				{"", config.RuleSecrets, "DECREE_API_SECRET is not set (used by GET /runs/{id})"},
-				{"", config.RuleSecrets, "DECREE_API_SECRET is not set (used by POST /runs/{wait_id}/replies/{event})"},
+				{"/notify", config.RuleSecrets, "DECREE_GO_REST_SECRET is not set"},
+				{"", config.RuleSecrets, "DECREE_GO_REST_SECRET is not set (used by GET /runs/{id})"},
+				{"", config.RuleSecrets, "DECREE_GO_REST_SECRET is not set (used by POST /runs/{wait_id}/replies/{event})"},
 			}},
-		{name: "secrets: blank", body: "builtins: { status: false, replies: false }\n" + ok, env: map[string]string{"DECREE_API_SECRET": strings.Repeat(" ", 40)},
-			want: []want{{"/notify", config.RuleSecrets, "DECREE_API_SECRET is blank"}}},
-		{name: "secrets: short", body: "builtins: { status: false, replies: false }\n" + ok, env: map[string]string{"DECREE_API_SECRET": goodSecret[:31]},
+		{name: "secrets: blank", body: "builtins: { status: { enabled: false }, replies: { enabled: false } }\n" + ok, env: map[string]string{"DECREE_GO_REST_SECRET": strings.Repeat(" ", 40)},
+			want: []want{{"/notify", config.RuleSecrets, "DECREE_GO_REST_SECRET is blank"}}},
+		{name: "secrets: short", body: "builtins: { status: { enabled: false }, replies: { enabled: false } }\n" + ok, env: map[string]string{"DECREE_GO_REST_SECRET": goodSecret[:31]},
 			want: []want{{"/notify", config.RuleSecrets, "is 31 characters, at least 32"}}},
 		{name: "secrets: endpoint's own unset", body: "endpoints:\n  - path: /notify\n    secret_env: OTHER_SECRET\n    message: { machine: notify }\n",
 			env: map[string]string{"OTHER_SECRET": "-"}, want: []want{{"/notify", config.RuleSecrets, "OTHER_SECRET is not set"}}},
-		{name: "secrets: default unused needs no value", body: "builtins: { status: false, replies: false }\nendpoints:\n  - path: /notify\n    secret_env: OTHER_SECRET\n    message: { machine: notify }\n",
-			env: map[string]string{"DECREE_API_SECRET": "-", "OTHER_SECRET": otherSecret}},
-		{name: "secrets: custom default name", body: "secret_env: MY_SECRET\n" + ok, env: map[string]string{"DECREE_API_SECRET": "-", "MY_SECRET": otherSecret}},
-		{name: "secrets: empty secret_env", body: "secret_env: ''\nbuiltins: { status: false, replies: false }\n" + ok,
+		{name: "secrets: default unused needs no value", body: "builtins: { status: { enabled: false }, replies: { enabled: false } }\nendpoints:\n  - path: /notify\n    secret_env: OTHER_SECRET\n    message: { machine: notify }\n",
+			env: map[string]string{"DECREE_GO_REST_SECRET": "-", "OTHER_SECRET": otherSecret}},
+		{name: "secrets: custom default name", body: "secret_env: MY_SECRET\n" + ok, env: map[string]string{"DECREE_GO_REST_SECRET": "-", "MY_SECRET": otherSecret}},
+		{name: "secrets: empty secret_env", body: "secret_env: ''\nbuiltins: { status: { enabled: false }, replies: { enabled: false } }\n" + ok,
 			want: []want{{"/notify", config.RuleSecrets, "no secret_env"}}},
+		{name: "secrets: built-ins' own", body: "builtins: { status: { secret_env: STATUS_SECRET }, replies: { secret_env: REPLY_SECRET } }\n" + ok,
+			env: map[string]string{"STATUS_SECRET": otherSecret, "REPLY_SECRET": goodSecret + "x"}},
+		{name: "secrets: built-ins' own, default unset", body: "builtins: { status: { secret_env: STATUS_SECRET }, replies: { secret_env: REPLY_SECRET } }\n" + ok,
+			env:  map[string]string{"DECREE_GO_REST_SECRET": "-", "STATUS_SECRET": otherSecret, "REPLY_SECRET": otherSecret},
+			want: []want{{"/notify", config.RuleSecrets, "DECREE_GO_REST_SECRET is not set"}}},
+		{name: "secrets: reply secret unset", body: "builtins: { replies: { enabled: true, secret_env: REPLY_SECRET } }\n" + ok,
+			env:  map[string]string{"REPLY_SECRET": "-"},
+			want: []want{{"", config.RuleSecrets, "REPLY_SECRET is not set (used by POST /runs/{wait_id}/replies/{event})"}}},
+		{name: "secrets: reply secret short", body: "builtins: { replies: { secret_env: REPLY_SECRET } }\n" + ok,
+			env:  map[string]string{"REPLY_SECRET": goodSecret[:31]},
+			want: []want{{"", config.RuleSecrets, "REPLY_SECRET is 31 characters, at least 32 are required (used by POST /runs/{wait_id}/replies/{event})"}}},
+		{name: "secrets: reply secret blank", body: "builtins: { replies: { secret_env: REPLY_SECRET } }\n" + ok,
+			env:  map[string]string{"REPLY_SECRET": strings.Repeat(" ", 40)},
+			want: []want{{"", config.RuleSecrets, "REPLY_SECRET is blank (used by POST"}}},
+		{name: "secrets: status secret unset", body: "builtins: { status: { secret_env: STATUS_SECRET } }\n" + ok,
+			env:  map[string]string{"STATUS_SECRET": "-"},
+			want: []want{{"", config.RuleSecrets, "STATUS_SECRET is not set (used by GET /runs/{id})"}}},
+		{name: "secrets: status secret short", body: "builtins: { status: { secret_env: STATUS_SECRET } }\n" + ok,
+			env:  map[string]string{"STATUS_SECRET": "short"},
+			want: []want{{"", config.RuleSecrets, "STATUS_SECRET is 5 characters"}}},
+		{name: "secrets: a disabled built-in's secret is not checked", body: "builtins: { replies: { enabled: false, secret_env: REPLY_SECRET } }\n" + ok,
+			env: map[string]string{"REPLY_SECRET": "-"}},
+		{name: "secrets: built-ins with no secret at all", body: "secret_env: ''\nendpoints:\n  - path: /notify\n    secret_env: OTHER_SECRET\n    message: { machine: notify }\n",
+			env: map[string]string{"OTHER_SECRET": otherSecret},
+			want: []want{
+				{"", config.RuleSecrets, "GET /runs/{id}: no secret_env, and the top-level secret_env is empty"},
+				{"", config.RuleSecrets, "POST /runs/{wait_id}/replies/{event}: no secret_env, and the top-level secret_env is empty"},
+			}},
 
 		// Step 7: decree.
 		{name: "decree: newer version passes", body: ok, setup: func(t *testing.T, _ string, s *decreetest.Stub) { s.SetVersion(t, "decree 1.0.0") }},
@@ -263,7 +291,7 @@ func TestValidateRules(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(config.ListenEnv, "")
-			t.Setenv("DECREE_API_SECRET", goodSecret)
+			t.Setenv("DECREE_GO_REST_SECRET", goodSecret)
 			t.Setenv("OTHER_SECRET", "")
 			os.Unsetenv("OTHER_SECRET")
 			for k, v := range tc.env {
@@ -284,11 +312,11 @@ func TestValidateRules(t *testing.T) {
 }
 
 func TestValidateReportsEveryErrorTogether(t *testing.T) {
-	t.Setenv("DECREE_API_SECRET", "short")
+	t.Setenv("DECREE_GO_REST_SECRET", "short")
 	proj := newProject(t)
 	stub := decreetest.New(t)
 	stub.SetVersion(t, "decree 0.4.0")
-	c := load(t, proj, stub, `builtins: { status: false, replies: false }
+	c := load(t, proj, stub, `builtins: { status: { enabled: false }, replies: { enabled: false } }
 endpoints:
   - path: /a//b
     message: { machine: notify }
@@ -323,7 +351,7 @@ endpoints:
 }
 
 func TestValidateRunsDecreeInProject(t *testing.T) {
-	t.Setenv("DECREE_API_SECRET", goodSecret)
+	t.Setenv("DECREE_GO_REST_SECRET", goodSecret)
 	proj := newProject(t)
 	stub := decreetest.New(t)
 	c := load(t, proj, stub, "endpoints:\n  - path: /notify\n    message: { machine: notify }\n")
@@ -337,7 +365,7 @@ func TestValidateRunsDecreeInProject(t *testing.T) {
 }
 
 func TestValidateSkipDecree(t *testing.T) {
-	t.Setenv("DECREE_API_SECRET", goodSecret)
+	t.Setenv("DECREE_GO_REST_SECRET", goodSecret)
 	proj := newProject(t)
 	stub := decreetest.New(t)
 	stub.SetVersion(t, "decree 0.1.0")
@@ -351,11 +379,11 @@ func TestValidateSkipDecree(t *testing.T) {
 }
 
 func TestDecreeOnPathAndRelative(t *testing.T) {
-	t.Setenv("DECREE_API_SECRET", goodSecret)
+	t.Setenv("DECREE_GO_REST_SECRET", goodSecret)
 	proj := newProject(t)
 	stub := decreetest.New(t)
 	stub.OnPath(t)
-	path := filepath.Join(stub.Dir, "decree-api.yml")
+	path := filepath.Join(stub.Dir, "decree-go-rest.yml")
 	ep := "endpoints:\n  - path: /notify\n    message: { machine: notify }\n"
 	for _, d := range []string{"decree", "./decree"} {
 		write(t, path, "project: "+proj+"\ndecree: "+d+"\n"+ep)

@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// TestSystemdUnit keeps deploy/decree-api.service the unit of SPEC.md §11,
+// TestSystemdUnit keeps deploy/decree-go-rest.service the unit of SPEC.md §11,
 // with KillMode=mixed so that systemd does not signal the daemon before
-// decree-api's own shutdown order runs (SPEC.md §5).
+// decree-go-rest's own shutdown order runs (SPEC.md §5).
 func TestSystemdUnit(t *testing.T) {
-	f, err := os.Open("../../deploy/decree-api.service")
+	f, err := os.Open("../../deploy/decree-go-rest.service")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestSystemdUnit(t *testing.T) {
 			t.Errorf("%s: %q, want one", key, got[key])
 		}
 	}
-	if exec := strings.Join(got["[Service]ExecStart"], ""); !strings.Contains(exec, "decree-api -config ") {
-		t.Errorf("ExecStart %q does not run decree-api -config", exec)
+	if exec := strings.Join(got["[Service]ExecStart"], ""); !strings.Contains(exec, "decree-go-rest -config ") {
+		t.Errorf("ExecStart %q does not run decree-go-rest -config", exec)
 	}
 }

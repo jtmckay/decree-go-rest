@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jtmckay/decree-api/internal/decreetest"
+	"github.com/jtmckay/decree-go-rest/internal/decreetest"
 )
 
 // fakeClock is a Clock whose timers fire only when a test fires them.

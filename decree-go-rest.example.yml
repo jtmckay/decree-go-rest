@@ -1,7 +1,7 @@
-# yaml-language-server: $schema=decree-api.schema.json
+# yaml-language-server: $schema=decree-go-rest.schema.json
 project: .                          # the directory that holds .decree/ (relative to this file)
 listen: 127.0.0.1:8801              # keep it on localhost behind a reverse proxy
-secret_env: DECREE_API_SECRET       # the default bearer secret, read from this environment variable
+secret_env: DECREE_GO_REST_SECRET   # the default bearer secret, read from this environment variable
 decree: decree                      # the decree binary; a name on PATH or a path
 
 daemon:
@@ -15,9 +15,10 @@ limits:
   rate_fail_max: 10                 # rejected requests per window (bad auth, unknown path, wrong method)
 
 builtins:
-  status: true                      # GET  /runs/{id}
-  replies: true                     # POST /runs/{wait_id}/replies/{event}
-  openapi: true                     # GET  /openapi.json (no auth; it reveals paths, not secrets)
+  status: { enabled: true }         # GET  /runs/{id}; secret_env optional: the top-level secret
+  # Answering a run's question, such as an approval, deserves its own secret.
+  replies: { enabled: true, secret_env: DECREE_GO_REST_REPLY_SECRET }   # POST /runs/{wait_id}/replies/{event}
+  openapi: { enabled: true }        # GET  /openapi.json (no auth; it reveals paths, not secrets)
 
 endpoints:
   - path: /notify

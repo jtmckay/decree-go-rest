@@ -33,7 +33,7 @@ func (d *fakeDaemon) state() DaemonState {
 func getHealth(t *testing.T, l *Live, method, path string) (int, http.Header, map[string]any) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	l.ServeHTTP(rec, httptest.NewRequest(method, "http://decree-api.test"+path, nil))
+	l.ServeHTTP(rec, httptest.NewRequest(method, "http://decree-go-rest.test"+path, nil))
 	var body map[string]any
 	if method != http.MethodHead {
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
@@ -225,7 +225,7 @@ func TestHealthWrongMethod(t *testing.T) {
 	f := newFixture(t, exampleConfig(t))
 	l := f.live(t)
 	rec := httptest.NewRecorder()
-	l.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "http://decree-api.test/healthz", nil))
+	l.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "http://decree-go-rest.test/healthz", nil))
 	if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != "GET, HEAD" {
 		t.Errorf("POST /healthz: %d, Allow %q; want 405 and GET, HEAD", rec.Code, rec.Header().Get("Allow"))
 	}

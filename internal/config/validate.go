@@ -241,11 +241,11 @@ func (v *validator) reserved(p string) string {
 	b := v.c.Builtins
 	under := func(prefix string) bool { return p == prefix || strings.HasPrefix(p, prefix+"/") }
 	switch {
-	case (b.Status || b.Replies) && strings.HasPrefix(p, "/runs/"):
+	case (b.Status.Enabled || b.Replies.Enabled) && strings.HasPrefix(p, "/runs/"):
 		return "/runs/"
 	case under(HealthPath):
 		return HealthPath
-	case b.OpenAPI && under(OpenAPIPath):
+	case b.OpenAPI.Enabled && under(OpenAPIPath):
 		return OpenAPIPath
 	}
 	return ""
@@ -428,8 +428,8 @@ func kindName(n *yaml.Node) string {
 }
 
 // secrets is step 6: every referenced variable is set, non-blank and long
-// enough. The default secret is referenced by endpoints without their own
-// and by the authenticated built-ins.
+// enough. The default secret is referenced by the endpoints and the
+// authenticated built-ins without their own.
 func (v *validator) secrets() {
 	users := map[string][]string{}
 	var order []string
@@ -447,14 +447,22 @@ func (v *validator) secrets() {
 		}
 		use(env, e.Path)
 	}
-	if b := v.c.Builtins; b.Status && v.c.SecretEnv != "" {
-		use(v.c.SecretEnv, "GET /runs/{id}")
-	}
-	if b := v.c.Builtins; b.Replies && v.c.SecretEnv != "" {
-		use(v.c.SecretEnv, "POST /runs/{wait_id}/replies/{event}")
-	}
-	if (v.c.Builtins.Status || v.c.Builtins.Replies) && v.c.SecretEnv == "" {
-		v.add("", RuleSecrets, "secret_env is empty, and the built-ins under /runs/ need the default secret")
+	for _, b := range []struct {
+		builtin Builtin
+		who     string
+	}{
+		{v.c.Builtins.Status, "GET " + StatusPath},
+		{v.c.Builtins.Replies, "POST " + RepliesPath},
+	} {
+		if !b.builtin.Enabled {
+			continue
+		}
+		env := b.builtin.EffectiveSecretEnv(v.c)
+		if env == "" {
+			v.add("", RuleSecrets, "%s: no secret_env, and the top-level secret_env is empty", b.who)
+			continue
+		}
+		use(env, b.who)
 	}
 	for _, env := range order {
 		val, set := os.LookupEnv(env)

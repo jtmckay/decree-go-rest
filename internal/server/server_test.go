@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jtmckay/decree-api/internal/config"
-	"github.com/jtmckay/decree-api/internal/decreetest"
+	"github.com/jtmckay/decree-go-rest/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/decreetest"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files")
@@ -28,6 +28,7 @@ func TestMain(m *testing.M) {
 var (
 	secret      = strings.Repeat("a", 64)
 	comfySecret = strings.Repeat("b", 32)
+	replySecret = strings.Repeat("c", 40)
 )
 
 const (
@@ -86,7 +87,7 @@ func write(t *testing.T, path, content string) {
 
 func exampleConfig(t *testing.T) string {
 	t.Helper()
-	raw, err := os.ReadFile("../../decree-api.example.yml")
+	raw, err := os.ReadFile("../../decree-go-rest.example.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,20 +95,21 @@ func exampleConfig(t *testing.T) string {
 }
 
 // newFixture validates cfg in a temp project holding the test machines,
-// as decree-api does at startup, and builds its Server.
+// as decree-go-rest does at startup, and builds its Server.
 func newFixture(t *testing.T, cfg string) *fixture {
 	t.Helper()
 	proj := t.TempDir()
 	write(t, config.MachineFile(proj, "notify"), notifyMachine)
 	write(t, config.MachineFile(proj, "comfy_image"), comfyMachine)
 	write(t, config.MachineFile(proj, "flags"), flagMachine)
-	path := filepath.Join(proj, "decree-api.yml")
+	path := filepath.Join(proj, "decree-go-rest.yml")
 	write(t, path, cfg)
 	stub := decreetest.New(t)
 	stub.OnPath(t)
 	t.Setenv(config.ListenEnv, "")
-	t.Setenv("DECREE_API_SECRET", secret)
+	t.Setenv("DECREE_GO_REST_SECRET", secret)
 	t.Setenv("COMFY_SECRET", comfySecret)
+	t.Setenv("DECREE_GO_REST_REPLY_SECRET", replySecret)
 	c, err := config.Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +134,7 @@ func (f *fixture) do(t *testing.T, r req) *httptest.ResponseRecorder {
 	if r.method == "" {
 		r.method = http.MethodPost
 	}
-	hr := httptest.NewRequest(r.method, "http://decree-api.test"+r.path, strings.NewReader(r.body))
+	hr := httptest.NewRequest(r.method, "http://decree-go-rest.test"+r.path, strings.NewReader(r.body))
 	for k, vs := range r.header {
 		for _, v := range vs {
 			hr.Header.Add(k, v)
@@ -415,7 +417,7 @@ func TestDecreeEnvironmentNeverPassed(t *testing.T) {
 	t.Setenv("DECREE_DATA_TITLE", "leak")
 	t.Setenv("TRACEPARENT", "00-11111111111111111111111111111111-2222222222222222-01")
 	t.Setenv("TRACESTATE", "a=b")
-	t.Setenv("DECREE_API_TEST_KEPT", "no") // a DECREE_ prefix all the same
+	t.Setenv("DECREE_GO_REST_TEST_KEPT", "no") // a DECREE_ prefix all the same
 	t.Setenv("KEPT_VAR", "yes")
 	if rec := f.do(t, req{path: "/notify/backup", bearer: secret, body: "x"}); rec.Code != 201 {
 		t.Fatalf("status %d", rec.Code)

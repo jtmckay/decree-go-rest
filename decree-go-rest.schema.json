@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/jtmckay/decree-api/main/decree-api.schema.json",
-  "title": "decree-api.yml",
-  "description": "The config of decree-api, the HTTP front door of a decree 0.5 project (SPEC.md §3). Every key is optional except `endpoints`, each endpoint's `path` and `message.machine`, and a resolvable secret. This schema checks the shape; `decree-api -check` checks the rest: that paths do not conflict, patterns compile, placeholders are path parameters, machines and their data exist, secrets are set, and decree runs.",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree-go-rest/main/decree-go-rest.schema.json",
+  "title": "decree-go-rest.yml",
+  "description": "The config of decree-go-rest, the HTTP front door of a decree 0.5 project (SPEC.md §3). Every key is optional except `endpoints`, each endpoint's `path` and `message.machine`, and a resolvable secret. This schema checks the shape; `decree-go-rest -check` checks the rest: that paths do not conflict, patterns compile, placeholders are path parameters, machines and their data exist, secrets are set, and decree runs.",
   "type": "object",
   "additionalProperties": false,
   "required": ["endpoints"],
@@ -17,11 +17,11 @@
       "type": "string",
       "minLength": 1,
       "default": "127.0.0.1:8801",
-      "description": "The address to listen on, host:port. Keep it on localhost behind a TLS reverse proxy. Overridden by DECREE_API_LISTEN when that is set. Takes effect only on restart."
+      "description": "The address to listen on, host:port. Keep it on localhost behind a TLS reverse proxy. Overridden by DECREE_GO_REST_LISTEN when that is set. Takes effect only on restart."
     },
     "secret_env": {
       "$ref": "#/$defs/envName",
-      "default": "DECREE_API_SECRET",
+      "default": "DECREE_GO_REST_SECRET",
       "description": "The environment variable holding the default bearer secret, at least 32 characters (generate one with `openssl rand -hex 32`). Secrets never appear in this file, so it can be committed."
     },
     "decree": {
@@ -83,19 +83,24 @@
       "description": "The built-in endpoints (SPEC.md §7). GET /healthz is always served. A configured endpoint may not use a path an enabled built-in uses.",
       "properties": {
         "status": {
-          "type": "boolean",
-          "default": true,
-          "description": "GET /runs/{id}: a run's `decree status`, with the default secret."
+          "$ref": "#/$defs/authBuiltin",
+          "description": "GET /runs/{id}: a run's `decree status`. Authenticated with its own `secret_env`, or the top-level one."
         },
         "replies": {
-          "type": "boolean",
-          "default": true,
-          "description": "POST /runs/{wait_id}/replies/{event}: reply to a run waiting for a person, with `decree event`, with the default secret."
+          "$ref": "#/$defs/authBuiltin",
+          "description": "POST /runs/{wait_id}/replies/{event}: reply to a run waiting for a person, with `decree event`. Authenticated with its own `secret_env`, or the top-level one. Answering a run's question, such as an approval, deserves its own secret."
         },
         "openapi": {
-          "type": "boolean",
-          "default": true,
-          "description": "GET /openapi.json: an OpenAPI 3.1 document of the endpoints, without auth (it reveals paths, not secrets)."
+          "type": "object",
+          "additionalProperties": false,
+          "description": "GET /openapi.json: an OpenAPI 3.1 document of the endpoints, without auth (it reveals paths, not secrets), so it takes no `secret_env`.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Serve GET /openapi.json."
+            }
+          }
         }
       }
     },
@@ -112,6 +117,22 @@
       "pattern": "^[0-9]*[1-9][0-9]*[smhd]$",
       "description": "decree's duration format: a positive whole number and s, m, h or d.",
       "examples": ["2s", "60s", "5m", "1d"]
+    },
+    "authBuiltin": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "An authenticated built-in endpoint. A bare true or false is not accepted: write { enabled: true }.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Serve this built-in."
+        },
+        "secret_env": {
+          "$ref": "#/$defs/envName",
+          "description": "The environment variable holding this built-in's own secret, at least 32 characters, instead of the top-level `secret_env`."
+        }
+      }
     },
     "envName": {
       "type": "string",

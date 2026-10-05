@@ -33,8 +33,8 @@ func freeAddr(t *testing.T) string {
 	return ln.Addr().String()
 }
 
-// TestServeUntilSIGTERM runs decree-api on the example config: it listens
-// on DECREE_API_LISTEN, runs decree under umask 027, and on SIGTERM
+// TestServeUntilSIGTERM runs decree-go-rest on the example config: it listens
+// on DECREE_GO_REST_LISTEN, runs decree under umask 027, and on SIGTERM
 // finishes the in-flight request before it exits 0.
 func TestServeUntilSIGTERM(t *testing.T) {
 	old := syscall.Umask(0o022)
@@ -43,12 +43,12 @@ func TestServeUntilSIGTERM(t *testing.T) {
 	path, stub := exampleProject(t)
 	stub.SetEmitSleep(t, "1")
 	addr := freeAddr(t)
-	t.Setenv("DECREE_API_LISTEN", addr)
+	t.Setenv("DECREE_GO_REST_LISTEN", addr)
 
 	exited := make(chan int, 1)
 	var stderr strings.Builder
 	go func() { exited <- run([]string{"-config", path}, &strings.Builder{}, &stderr) }()
-	waitFor(t, "decree-api to listen", func() bool {
+	waitFor(t, "decree-go-rest to listen", func() bool {
 		resp, err := http.Get("http://" + addr + "/nope")
 		if err != nil {
 			return false
@@ -84,7 +84,7 @@ func TestServeUntilSIGTERM(t *testing.T) {
 			t.Errorf("exit %d, want 0; stderr %q", code, stderr.String())
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("decree-api did not exit after SIGTERM")
+		t.Fatal("decree-go-rest did not exit after SIGTERM")
 	}
 	if _, err := net.DialTimeout("tcp", addr, 100*time.Millisecond); err == nil {
 		t.Error("still accepting connections after exit")

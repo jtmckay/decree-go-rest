@@ -4,3 +4,4 @@
 04-daemon.md
 05-builtins-openapi.md
 06-packaging-e2e.md
+07-rename-and-reply-secret.md

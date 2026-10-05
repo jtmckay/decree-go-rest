@@ -12,12 +12,12 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jtmckay/decree-api/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
-const schemaFile = "../../decree-api.schema.json"
+const schemaFile = "../../decree-go-rest.schema.json"
 
-// compileSchema compiles decree-api.schema.json. Its draft 2020-12
+// compileSchema compiles decree-go-rest.schema.json. Its draft 2020-12
 // metaschema is built into the validator, so nothing is fetched.
 func compileSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
@@ -32,10 +32,10 @@ func compileSchema(t *testing.T) *jsonschema.Schema {
 	}
 	c := jsonschema.NewCompiler()
 	c.AssertFormat()
-	if err := c.AddResource("decree-api.schema.json", doc); err != nil {
+	if err := c.AddResource("decree-go-rest.schema.json", doc); err != nil {
 		t.Fatal(err)
 	}
-	s, err := c.Compile("decree-api.schema.json")
+	s, err := c.Compile("decree-go-rest.schema.json")
 	if err != nil {
 		t.Fatalf("%s: %v", schemaFile, err)
 	}
@@ -61,17 +61,17 @@ func yamlInstance(t *testing.T, src string) any {
 }
 
 // TestAcceptanceExampleMatchesSchema is the second acceptance criterion:
-// decree-api.example.yml passes decree-api.schema.json.
+// decree-go-rest.example.yml passes decree-go-rest.schema.json.
 func TestAcceptanceExampleMatchesSchema(t *testing.T) {
-	example, err := os.ReadFile("../../decree-api.example.yml")
+	example, err := os.ReadFile("../../decree-go-rest.example.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(string(example), schemaLine) {
-		t.Errorf("decree-api.example.yml does not start with %q", schemaLine)
+		t.Errorf("decree-go-rest.example.yml does not start with %q", schemaLine)
 	}
 	if err := compileSchema(t).Validate(yamlInstance(t, string(example))); err != nil {
-		t.Errorf("decree-api.example.yml does not match the schema:\n%v", err)
+		t.Errorf("decree-go-rest.example.yml does not match the schema:\n%v", err)
 	}
 }
 

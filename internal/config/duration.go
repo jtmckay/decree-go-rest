@@ -14,7 +14,7 @@ import (
 type Duration time.Duration
 
 // ParseDuration parses decree's duration format. It is the only duration
-// parser in decree-api.
+// parser in decree-go-rest.
 func ParseDuration(s string) (time.Duration, error) {
 	if len(s) < 2 {
 		return 0, fmt.Errorf("invalid duration %q: want a whole number and s, m, h or d", s)

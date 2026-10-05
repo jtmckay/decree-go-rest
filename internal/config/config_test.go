@@ -21,7 +21,7 @@ func writeFile(t *testing.T, path, content string) {
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv(ListenEnv, "")
 	dir := t.TempDir()
-	path := filepath.Join(dir, "decree-api.yml")
+	path := filepath.Join(dir, "decree-go-rest.yml")
 	writeFile(t, path, "endpoints:\n  - path: /notify\n    message: { machine: notify }\n")
 	c, err := Load(path)
 	if err != nil {
@@ -34,7 +34,7 @@ func TestLoadDefaults(t *testing.T) {
 		{"project", c.Project, "."},
 		{"project dir", c.ProjectDir, dir},
 		{"listen", c.Listen, "127.0.0.1:8801"},
-		{"secret_env", c.SecretEnv, "DECREE_API_SECRET"},
+		{"secret_env", c.SecretEnv, "DECREE_GO_REST_SECRET"},
 		{"decree", c.Decree, "decree"},
 		{"daemon.enabled", c.Daemon.Enabled, true},
 		{"daemon.interval", c.Daemon.Interval.Std(), 2 * time.Second},
@@ -42,11 +42,13 @@ func TestLoadDefaults(t *testing.T) {
 		{"limits.rate_window", c.Limits.RateWindow.Std(), 60 * time.Second},
 		{"limits.rate_max", c.Limits.RateMax, 60},
 		{"limits.rate_fail_max", c.Limits.RateFailMax, 10},
-		{"builtins.status", c.Builtins.Status, true},
-		{"builtins.replies", c.Builtins.Replies, true},
-		{"builtins.openapi", c.Builtins.OpenAPI, true},
+		{"builtins.status.enabled", c.Builtins.Status.Enabled, true},
+		{"builtins.status effective secret_env", c.Builtins.Status.EffectiveSecretEnv(c), "DECREE_GO_REST_SECRET"},
+		{"builtins.replies.enabled", c.Builtins.Replies.Enabled, true},
+		{"builtins.replies effective secret_env", c.Builtins.Replies.EffectiveSecretEnv(c), "DECREE_GO_REST_SECRET"},
+		{"builtins.openapi.enabled", c.Builtins.OpenAPI.Enabled, true},
 		{"endpoints[0].secret_env", c.Endpoints[0].SecretEnv, ""},
-		{"endpoints[0] effective secret_env", c.Endpoints[0].EffectiveSecretEnv(c), "DECREE_API_SECRET"},
+		{"endpoints[0] effective secret_env", c.Endpoints[0].EffectiveSecretEnv(c), "DECREE_GO_REST_SECRET"},
 		{"endpoints[0].body", c.Endpoints[0].Body, "required"},
 		{"endpoints[0].patterns", len(c.Endpoints[0].Patterns), 0},
 		{"endpoints[0].message.params", len(c.Endpoints[0].Message.Params), 0},
@@ -61,14 +63,14 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadAllKeys(t *testing.T) {
 	t.Setenv(ListenEnv, "")
 	dir := t.TempDir()
-	path := filepath.Join(dir, "conf", "decree-api.yml")
+	path := filepath.Join(dir, "conf", "decree-go-rest.yml")
 	writeFile(t, path, `project: ../proj
 listen: 0.0.0.0:9000
 secret_env: MY_SECRET
 decree: /opt/decree
 daemon: { enabled: false, interval: 1m }
 limits: { max_body_bytes: 10, rate_window: 1h, rate_max: 5, rate_fail_max: 2 }
-builtins: { status: false, replies: false, openapi: false }
+builtins: { status: { enabled: false }, replies: { enabled: false }, openapi: { enabled: false } }
 endpoints:
   - path: /a/{x}
     secret_env: OTHER
@@ -180,5 +182,69 @@ func TestDurationString(t *testing.T) {
 		if back, err := ParseDuration(got); err != nil || back != in {
 			t.Errorf("ParseDuration(%q) = %v, %v; want %v", got, back, err, in)
 		}
+	}
+}
+
+// TestBuiltinObjects: each built-in is an object whose enabled defaults to
+// true and whose secret_env defaults to the top-level one.
+func TestBuiltinObjects(t *testing.T) {
+	c, err := Parse([]byte(`secret_env: TOP
+builtins:
+  status: { secret_env: STATUS_SECRET }
+  replies: { enabled: false }
+  openapi: {}
+endpoints: []
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := []struct {
+		name      string
+		got, want any
+	}{
+		{"status.enabled", c.Builtins.Status.Enabled, true},
+		{"status effective secret_env", c.Builtins.Status.EffectiveSecretEnv(c), "STATUS_SECRET"},
+		{"replies.enabled", c.Builtins.Replies.Enabled, false},
+		{"replies effective secret_env", c.Builtins.Replies.EffectiveSecretEnv(c), "TOP"},
+		{"openapi.enabled", c.Builtins.OpenAPI.Enabled, true},
+	}
+	for _, ch := range checks {
+		if ch.got != ch.want {
+			t.Errorf("%s = %v, want %v", ch.name, ch.got, ch.want)
+		}
+	}
+	var routes []string
+	for _, rt := range c.BuiltinRoutes() {
+		routes = append(routes, rt.Method+" "+rt.Path)
+	}
+	if got := strings.Join(routes, ", "); got != "GET /healthz, GET /runs/{id}, GET /openapi.json" {
+		t.Errorf("built-in routes %s", got)
+	}
+}
+
+// TestBuiltinConfigErrors: a bare true or false names the object form,
+// and openapi takes no secret_env.
+func TestBuiltinConfigErrors(t *testing.T) {
+	cases := map[string]struct{ doc, want string }{
+		"bare true":          {"builtins: { replies: true }\nendpoints: []\n", "builtins.replies: write { enabled: true }"},
+		"bare false":         {"builtins:\n  status: false\nendpoints: []\n", "line 2: builtins.status: write { enabled: false }"},
+		"bare openapi":       {"builtins: { openapi: true }\nendpoints: []\n", "builtins.openapi: write { enabled: true }"},
+		"string":             {"builtins: { replies: yes }\nendpoints: []\n", "builtins.replies: must be an object, such as { enabled: true }"},
+		"openapi secret_env": {"builtins: { openapi: { secret_env: OPENAPI_SECRET } }\nendpoints: []\n", "builtins.openapi: secret_env is not allowed"},
+		"unknown built-in":   {"builtins: { events: { enabled: true } }\nendpoints: []\n", `builtins: unknown key "events"`},
+		"unknown key":        {"builtins: { replies: { secret: x } }\nendpoints: []\n", `builtins.replies: unknown key "secret"`},
+		"duplicate key":      {"builtins: { replies: { enabled: true, enabled: false } }\nendpoints: []\n", `duplicate key "enabled"`},
+		"duplicate built-in": {"builtins:\n  replies: {}\n  replies: {}\nendpoints: []\n", `duplicate key "replies"`},
+		"enabled not a bool": {"builtins: { status: { enabled: sure } }\nendpoints: []\n", "builtins.status.enabled"},
+		"secret_env a list":  {"builtins: { status: { secret_env: [A] } }\nendpoints: []\n", "builtins.status.secret_env: must be a string"},
+		"not a mapping":      {"builtins: [status]\nendpoints: []\n", "builtins must be a mapping"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.doc))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("Parse error %v, want one containing %q", err, tc.want)
+			}
+		})
 	}
 }

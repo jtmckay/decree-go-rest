@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jtmckay/decree-api/internal/decreetest"
+	"github.com/jtmckay/decree-go-rest/internal/decreetest"
 )
 
 func TestRunStatus(t *testing.T) {
@@ -99,7 +99,7 @@ func TestRunStatusStatuses(t *testing.T) {
 }
 
 func TestRunStatusDisabled(t *testing.T) {
-	f := newFixture(t, strings.Replace(exampleConfig(t), "status: true", "status: false", 1))
+	f := newFixture(t, strings.Replace(exampleConfig(t), "status: { enabled: true }", "status: { enabled: false }", 1))
 	rec := f.do(t, req{method: "GET", path: "/runs/r", bearer: secret})
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", rec.Code)
@@ -110,7 +110,7 @@ func TestRunStatusDisabled(t *testing.T) {
 func TestAcceptanceReply(t *testing.T) {
 	f := newFixture(t, exampleConfig(t))
 	const waitID = "20261005T043125Z-0a1b2c.w3"
-	rec := f.do(t, req{path: "/runs/" + waitID + "/replies/approve", bearer: secret, body: "looks good"})
+	rec := f.do(t, req{path: "/runs/" + waitID + "/replies/approve", bearer: replySecret, body: "looks good"})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status %d, body %s; want 201", rec.Code, rec.Body)
 	}
@@ -153,7 +153,7 @@ func TestReplyNote(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			f := newFixture(t, exampleConfig(t))
-			rec := f.do(t, req{path: "/runs/w/replies/approve", bearer: secret, body: c.body})
+			rec := f.do(t, req{path: "/runs/w/replies/approve", bearer: replySecret, body: c.body})
 			if rec.Code != http.StatusCreated {
 				t.Fatalf("status %d, body %s; want 201", rec.Code, rec.Body)
 			}
@@ -183,36 +183,36 @@ func TestReplyStatuses(t *testing.T) {
 		allow  string
 		runs   bool
 	}{
-		{name: "queued", req: req{path: "/runs/r.w3/replies/approve", bearer: secret, body: "x"}, status: 201, runs: true},
-		{name: "no note", req: req{path: "/runs/r/replies/reject", bearer: secret}, status: 201, runs: true},
-		{name: "note at the cap", req: req{path: "/runs/r/replies/approve", bearer: secret, body: strings.Repeat("x", 16)}, status: 201, runs: true},
-		{name: "trailing slash", req: req{path: "/runs/r/replies/approve/", bearer: secret}, status: 201, runs: true},
+		{name: "queued", req: req{path: "/runs/r.w3/replies/approve", bearer: replySecret, body: "x"}, status: 201, runs: true},
+		{name: "no note", req: req{path: "/runs/r/replies/reject", bearer: replySecret}, status: 201, runs: true},
+		{name: "note at the cap", req: req{path: "/runs/r/replies/approve", bearer: replySecret, body: strings.Repeat("x", 16)}, status: 201, runs: true},
+		{name: "trailing slash", req: req{path: "/runs/r/replies/approve/", bearer: replySecret}, status: 201, runs: true},
 		{name: "not waiting", setup: func(t *testing.T, f *fixture) {
 			f.stub.SetEvent(t, 1, "", "error: run r is not waiting\n")
-		}, req: req{path: "/runs/r/replies/approve", bearer: secret}, status: 409, msg: "run r is not waiting", runs: true},
+		}, req: req{path: "/runs/r/replies/approve", bearer: replySecret}, status: 409, msg: "run r is not waiting", runs: true},
 		{name: "exit 1, no stderr", setup: func(t *testing.T, f *fixture) {
 			f.stub.SetEvent(t, 1, "", "")
-		}, req: req{path: "/runs/r/replies/approve", bearer: secret}, status: 409, msg: "the run does not accept this reply", runs: true},
+		}, req: req{path: "/runs/r/replies/approve", bearer: replySecret}, status: 409, msg: "the run does not accept this reply", runs: true},
 		{name: "exit 2", setup: func(t *testing.T, f *fixture) {
 			f.stub.SetEvent(t, 2, "", "error: secret detail\n")
-		}, req: req{path: "/runs/r/replies/approve", bearer: secret}, status: 500, msg: replyFailed, runs: true},
+		}, req: req{path: "/runs/r/replies/approve", bearer: replySecret}, status: 500, msg: replyFailed, runs: true},
 		{name: "unreadable output", setup: func(t *testing.T, f *fixture) {
 			f.stub.SetEvent(t, 0, "Usage: decree event\n", "")
-		}, req: req{path: "/runs/r/replies/approve", bearer: secret}, status: 500, msg: replyFailed, runs: true},
+		}, req: req{path: "/runs/r/replies/approve", bearer: replySecret}, status: 500, msg: replyFailed, runs: true},
 		{name: "output without id", setup: func(t *testing.T, f *fixture) {
 			f.stub.SetEvent(t, 0, `{"path": ".decree/inbox/x.md"}`, "")
-		}, req: req{path: "/runs/r/replies/approve", bearer: secret}, status: 500, msg: replyFailed, runs: true},
+		}, req: req{path: "/runs/r/replies/approve", bearer: replySecret}, status: 500, msg: replyFailed, runs: true},
 		{name: "timeout", setup: func(t *testing.T, f *fixture) {
 			f.stub.SetSleep(t, "event", "5")
 			f.srv.EmitTimeout = 200 * time.Millisecond
-		}, req: req{path: "/runs/r/replies/approve", bearer: secret}, status: 500, msg: replyFailed, runs: true},
-		{name: "note too large", req: req{path: "/runs/r/replies/approve", bearer: secret, body: strings.Repeat("x", 17)}, status: 413, msg: "the body is larger than 16 bytes"},
-		{name: "NUL in the note", req: req{path: "/runs/r/replies/approve", bearer: secret, body: "a\x00b"}, status: 400, msg: "the note must not contain a NUL byte"},
-		{name: "wait_id too long", req: req{path: "/runs/" + long + "/replies/approve", bearer: secret}, status: 400, msg: "parameter wait_id does not match its pattern"},
-		{name: "event outside its pattern", req: req{path: "/runs/r/replies/a%2Fb", bearer: secret}, status: 400, msg: "parameter event does not match its pattern"},
+		}, req: req{path: "/runs/r/replies/approve", bearer: replySecret}, status: 500, msg: replyFailed, runs: true},
+		{name: "note too large", req: req{path: "/runs/r/replies/approve", bearer: replySecret, body: strings.Repeat("x", 17)}, status: 413, msg: "the body is larger than 16 bytes"},
+		{name: "NUL in the note", req: req{path: "/runs/r/replies/approve", bearer: replySecret, body: "a\x00b"}, status: 400, msg: "the note must not contain a NUL byte"},
+		{name: "wait_id too long", req: req{path: "/runs/" + long + "/replies/approve", bearer: replySecret}, status: 400, msg: "parameter wait_id does not match its pattern"},
+		{name: "event outside its pattern", req: req{path: "/runs/r/replies/a%2Fb", bearer: replySecret}, status: 400, msg: "parameter event does not match its pattern"},
 		{name: "no bearer", req: req{path: "/runs/r/replies/approve"}, status: 401, msg: "unauthorized"},
 		{name: "an endpoint's own secret", req: req{path: "/runs/r/replies/approve", bearer: comfySecret}, status: 401, msg: "unauthorized"},
-		{name: "GET", req: req{method: "GET", path: "/runs/r/replies/approve", bearer: secret}, status: 405, msg: "method not allowed", allow: "POST"},
+		{name: "GET", req: req{method: "GET", path: "/runs/r/replies/approve", bearer: replySecret}, status: 405, msg: "method not allowed", allow: "POST"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -240,7 +240,7 @@ func TestReplyStatuses(t *testing.T) {
 }
 
 func TestRepliesDisabled(t *testing.T) {
-	f := newFixture(t, strings.Replace(exampleConfig(t), "replies: true", "replies: false", 1))
+	f := newFixture(t, strings.Replace(exampleConfig(t), "replies: { enabled: true, secret_env: DECREE_GO_REST_REPLY_SECRET }", "replies: { enabled: false }", 1))
 	rec := f.do(t, req{path: "/runs/r/replies/approve", bearer: secret})
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", rec.Code)
@@ -255,7 +255,7 @@ var builtinRequests = []struct {
 	status     int
 }{
 	{"status", "/runs/{id}", req{method: "GET", path: "/runs/r", bearer: secret}, http.StatusOK},
-	{"event", "/runs/{wait_id}/replies/{event}", req{path: "/runs/r.w1/replies/approve", bearer: secret, body: "note"}, http.StatusCreated},
+	{"event", "/runs/{wait_id}/replies/{event}", req{path: "/runs/r.w1/replies/approve", bearer: replySecret, body: "note"}, http.StatusCreated},
 }
 
 // TestBuiltinsBudgets: the built-ins spend from the same budgets as the
@@ -356,7 +356,7 @@ func TestBuiltinsLogged(t *testing.T) {
 	logs := captureLogs(f.srv)
 	const tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 	f.do(t, req{method: "GET", path: "/runs/secret-run-id", bearer: secret, header: http.Header{"Traceparent": {tp}}})
-	f.do(t, req{path: "/runs/secret-wait-id/replies/secret-event", bearer: secret, body: "secret note"})
+	f.do(t, req{path: "/runs/secret-wait-id/replies/secret-event", bearer: replySecret, body: "secret note"})
 	f.do(t, req{method: "GET", path: "/openapi.json"})
 	recs := requestRecords(t, logs)
 	if len(recs) != 3 {

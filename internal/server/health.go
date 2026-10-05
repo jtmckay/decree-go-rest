@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jtmckay/decree-api/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
 // HealthRoute is the path of the health endpoint (SPEC.md §7).

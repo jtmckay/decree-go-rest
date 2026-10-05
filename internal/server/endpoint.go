@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/jtmckay/decree-api/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
 // MaxParamBytes is the longest accepted path parameter, after decoding

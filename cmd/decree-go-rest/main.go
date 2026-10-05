@@ -1,4 +1,4 @@
-// Command decree-api is the HTTP front door of a decree project (SPEC.md).
+// Command decree-go-rest is the HTTP front door of a decree project (SPEC.md).
 package main
 
 import (
@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jtmckay/decree-api/internal/config"
-	"github.com/jtmckay/decree-api/internal/daemon"
-	"github.com/jtmckay/decree-api/internal/server"
+	"github.com/jtmckay/decree-go-rest/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/daemon"
+	"github.com/jtmckay/decree-go-rest/internal/server"
 )
 
 func main() {
@@ -28,7 +28,7 @@ func main() {
 
 // run is main without the process: it returns the exit code.
 func run(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("decree-api", flag.ContinueOnError)
+	fs := flag.NewFlagSet("decree-go-rest", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", config.DefaultConfigPath, "the config file")
 	check := fs.Bool("check", false, "validate the config and exit")
@@ -41,15 +41,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "decree-api: unexpected arguments: %v\n", fs.Args())
+		fmt.Fprintf(stderr, "decree-go-rest: unexpected arguments: %v\n", fs.Args())
 		return 2
 	}
 	switch {
 	case *showVersion:
-		fmt.Fprintf(stdout, "decree-api %s\n", buildVersion())
+		fmt.Fprintf(stdout, "decree-go-rest %s\n", buildVersion())
 		return 0
 	case *check && *healthcheck:
-		fmt.Fprintln(stderr, "decree-api: -check and -healthcheck cannot be combined")
+		fmt.Fprintln(stderr, "decree-go-rest: -check and -healthcheck cannot be combined")
 		return 2
 	case *check:
 		return runCheck(*configPath, stdout, stderr)
@@ -59,9 +59,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runServe(*configPath, stderr)
 }
 
-// version is decree-api's version when set at link time, as in
+// version is decree-go-rest's version when set at link time, as in
 //
-//	go build -ldflags "-X main.version=v1.0.0" ./cmd/decree-api
+//	go build -ldflags "-X main.version=v1.0.0" ./cmd/decree-go-rest
 var version string
 
 // buildVersion is the linker's version if set, else the module version
@@ -103,7 +103,7 @@ func versionOf(info *debug.BuildInfo) string {
 	return "devel-" + rev
 }
 
-// runCheck is `decree-api -check`: SPEC.md §3, Validation.
+// runCheck is `decree-go-rest -check`: SPEC.md §3, Validation.
 func runCheck(path string, stdout, stderr io.Writer) int {
 	c := loadValid(path, stderr)
 	if c == nil {
@@ -144,11 +144,11 @@ func runServe(path string, stderr io.Writer) int {
 		return 1
 	}
 	server.SetUmask()
-	// One decree-api, so one daemon, per project (SPEC.md §5). A second
+	// One decree-go-rest, so one daemon, per project (SPEC.md §5). A second
 	// instance stops here, before it touches anything process-wide.
 	lock, err := daemon.Acquire(c.ProjectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "decree-api: %v\n", err)
+		fmt.Fprintf(stderr, "decree-go-rest: %v\n", err)
 		return 1
 	}
 	defer lock.Unlock()
@@ -156,7 +156,7 @@ func runServe(path string, stderr io.Writer) int {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(stderr, nil)))
 	srv, err := server.New(c)
 	if err != nil {
-		fmt.Fprintf(stderr, "decree-api: %v\n", err)
+		fmt.Fprintf(stderr, "decree-go-rest: %v\n", err)
 		return 1
 	}
 	live := server.NewLive(path, c, srv)
@@ -167,7 +167,7 @@ func runServe(path string, stderr io.Writer) int {
 	if c.Daemon.Enabled {
 		sup = daemon.New(srv.Decree(), c.ProjectDir, c.Daemon.Interval.String())
 		if err := sup.Start(); err != nil {
-			fmt.Fprintf(stderr, "decree-api: %v\n", err)
+			fmt.Fprintf(stderr, "decree-go-rest: %v\n", err)
 			return 1
 		}
 		live.Daemon = func() server.DaemonState {
@@ -192,7 +192,7 @@ func runServe(path string, stderr io.Writer) int {
 func listenAndServe(ctx context.Context, c *config.Config, live *server.Live, stderr io.Writer) int {
 	ln, err := net.Listen("tcp", c.Listen)
 	if err != nil {
-		fmt.Fprintf(stderr, "decree-api: %v\n", err)
+		fmt.Fprintf(stderr, "decree-go-rest: %v\n", err)
 		return 1
 	}
 	slog.Info("listening", "addr", ln.Addr().String(), "project", c.ProjectDir)
@@ -203,7 +203,7 @@ func listenAndServe(ctx context.Context, c *config.Config, live *server.Live, st
 	stopReloads()
 	<-reloads
 	if err != nil {
-		fmt.Fprintf(stderr, "decree-api: %v\n", err)
+		fmt.Fprintf(stderr, "decree-go-rest: %v\n", err)
 		return 1
 	}
 	return 0
@@ -212,30 +212,30 @@ func listenAndServe(ctx context.Context, c *config.Config, live *server.Live, st
 // HealthcheckTimeout bounds the request of -healthcheck.
 const HealthcheckTimeout = 5 * time.Second
 
-// runHealthcheck is `decree-api -healthcheck` (SPEC.md §11): GET /healthz
+// runHealthcheck is `decree-go-rest -healthcheck` (SPEC.md §11): GET /healthz
 // on the configured listen address, exit 0 on 200 and 1 otherwise. It
 // prints the body, so a container's health log shows the state.
 func runHealthcheck(path string, stdout, stderr io.Writer) int {
 	c, err := config.Load(path)
 	if err != nil {
-		fmt.Fprintf(stderr, "decree-api: %v\n", err)
+		fmt.Fprintf(stderr, "decree-go-rest: %v\n", err)
 		return 1
 	}
 	u, err := healthURL(c.Listen)
 	if err != nil {
-		fmt.Fprintf(stderr, "decree-api: %v\n", err)
+		fmt.Fprintf(stderr, "decree-go-rest: %v\n", err)
 		return 1
 	}
 	client := &http.Client{Timeout: HealthcheckTimeout}
 	resp, err := client.Get(u)
 	if err != nil {
-		fmt.Fprintf(stderr, "decree-api: healthcheck: %v\n", err)
+		fmt.Fprintf(stderr, "decree-go-rest: healthcheck: %v\n", err)
 		return 1
 	}
 	defer resp.Body.Close()
 	io.Copy(stdout, io.LimitReader(resp.Body, 64<<10))
 	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(stderr, "decree-api: healthcheck: %s\n", resp.Status)
+		fmt.Fprintf(stderr, "decree-go-rest: healthcheck: %s\n", resp.Status)
 		return 1
 	}
 	return 0

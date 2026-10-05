@@ -1,5 +1,5 @@
 // Package daemon keeps `decree daemon` running for a project, and holds
-// the lock that makes decree-api the only one doing so (SPEC.md §5).
+// the lock that makes decree-go-rest the only one doing so (SPEC.md §5).
 package daemon
 
 import (
@@ -49,7 +49,7 @@ type State struct {
 	Running bool
 	// PID is the daemon's process id while it runs, otherwise 0.
 	PID int
-	// Restarts counts the restarts since decree-api started.
+	// Restarts counts the restarts since decree-go-rest started.
 	Restarts int
 	// Since is when the daemon last started or stopped.
 	Since time.Time
@@ -150,7 +150,7 @@ type proc struct {
 func (s *Supervisor) spawn() (*proc, error) {
 	cmd := exec.Command(s.bin, s.args...)
 	cmd.Dir = s.dir
-	// Its own process group: a terminal's Ctrl-C reaches decree-api only,
+	// Its own process group: a terminal's Ctrl-C reaches decree-go-rest only,
 	// which stops the daemon after finishing in-flight requests.
 	setProcessGroup(cmd)
 	outR, outW, err := os.Pipe()

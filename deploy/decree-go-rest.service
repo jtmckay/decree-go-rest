@@ -1,35 +1,36 @@
-# decree-api as a systemd user unit (SPEC.md §11).
+# decree-go-rest as a systemd user unit (SPEC.md §11).
 #
 # Install:
-#   cp deploy/decree-api.service ~/.config/systemd/user/
+#   cp deploy/decree-go-rest.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload
-#   systemctl --user enable --now decree-api
+#   systemctl --user enable --now decree-go-rest
 #   loginctl enable-linger "$USER"     # keep running while logged out
 # Logs (JSON lines):
-#   journalctl --user -u decree-api -f
+#   journalctl --user -u decree-go-rest -f
 #
 # Adjust the paths below (%h is your home directory) to your project.
 
 [Unit]
-Description=decree-api: HTTP front door of a decree project
-Documentation=https://github.com/jtmckay/decree-api
-# decree-api listens on a socket; wait for the network to be up.
+Description=decree-go-rest: HTTP front door of a decree project
+Documentation=https://github.com/jtmckay/decree-go-rest
+# decree-go-rest listens on a socket; wait for the network to be up.
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=simple
-# The project: the directory holding decree-api.yml and .decree/.
+# The project: the directory holding decree-go-rest.yml and .decree/.
 WorkingDirectory=%h/decree-project
-ExecStart=%h/go/bin/decree-api -config %h/decree-project/decree-api.yml
+ExecStart=%h/go/bin/decree-go-rest -config %h/decree-project/decree-go-rest.yml
 
 # Secrets live only in the environment, never in the config. The file
-# holds lines such as DECREE_API_SECRET=<openssl rand -hex 32>; keep it
-# mode 600. The file is required (no "-" prefix): without it the secrets
-# are missing and decree-api would refuse to start anyway.
-EnvironmentFile=%h/.config/decree-api/env
+# holds lines such as DECREE_GO_REST_SECRET=<openssl rand -hex 32> and
+# DECREE_GO_REST_REPLY_SECRET=<another one>; keep it mode 600. The file
+# is required (no "-" prefix): without it the secrets are missing and
+# decree-go-rest would refuse to start anyway.
+EnvironmentFile=%h/.config/decree-go-rest/env
 
-# User units get a minimal PATH. decree-api runs decree from PATH (unless
+# User units get a minimal PATH. decree-go-rest runs decree from PATH (unless
 # the config's `decree:` is a path), and the daemon runs the project's
 # scripts, which need every tool they use.
 Environment=PATH=%h/.local/bin:%h/.cargo/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin
@@ -39,10 +40,10 @@ Environment=PATH=%h/.local/bin:%h/.cargo/bin:%h/go/bin:/usr/local/bin:/usr/bin:/
 Restart=on-failure
 RestartSec=5s
 
-# Shutdown order (SPEC.md §5): on SIGTERM decree-api stops accepting
+# Shutdown order (SPEC.md §5): on SIGTERM decree-go-rest stops accepting
 # requests and finishes in-flight ones (up to 10 s), then sends SIGTERM to
 # `decree daemon` and waits up to 15 s, so decree records the running script
-# as interrupted. KillMode=mixed sends SIGTERM to decree-api alone, not to
+# as interrupted. KillMode=mixed sends SIGTERM to decree-go-rest alone, not to
 # the daemon and its scripts at the same time, so that order holds.
 # TimeoutStopSec covers 10 s + 15 s with room to spare before systemd
 # sends SIGKILL to whatever is left.

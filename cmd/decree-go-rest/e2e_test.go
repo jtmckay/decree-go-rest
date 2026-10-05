@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jtmckay/decree-api/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
 // echoParamsMachine records the run's data, so the test sees the params
-// decree-api queued, as decree typed them.
+// decree-go-rest queued, as decree typed them.
 const echoParamsMachine = `# yaml-language-server: $schema=../schema/v1/machine.schema.json
 name: echo_params
 description: Record the run's DECREE_DATA_* variables and its message.
@@ -47,7 +47,7 @@ mv "$DECREE_PROJECT_ROOT/params.env.tmp" "$DECREE_PROJECT_ROOT/params.env"
 const e2eConfig = `project: .
 decree: decree
 daemon: { enabled: true, interval: 1s }
-builtins: { status: true, replies: false, openapi: false }
+builtins: { status: { enabled: true }, replies: { enabled: false }, openapi: { enabled: false } }
 endpoints:
   - path: /echo/{title}
     message:
@@ -92,7 +92,7 @@ func TestEndToEnd(t *testing.T) {
 	if err := os.Chmod(script, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(proj, "decree-api.yml")
+	path := filepath.Join(proj, "decree-go-rest.yml")
 	write(t, path, e2eConfig)
 
 	in := serve(t, path)
@@ -138,7 +138,7 @@ func TestEndToEnd(t *testing.T) {
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("run %s not finished within %v (last: %+v); decree-api stderr:\n%s", queued.ID, E2ETimeout, run, in.stderr)
+			t.Fatalf("run %s not finished within %v (last: %+v); decree-go-rest stderr:\n%s", queued.ID, E2ETimeout, run, in.stderr)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -163,13 +163,13 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("the run's message lacks the body:\n%s", msg)
 	}
 
-	// Shut down: decree-api exits 0, and so has the daemon.
+	// Shut down: decree-go-rest exits 0, and so has the daemon.
 	stopped = true
 	if code := in.terminate(t, 30*time.Second); code != 0 {
-		t.Fatalf("decree-api exited %d; stderr:\n%s", code, in.stderr)
+		t.Fatalf("decree-go-rest exited %d; stderr:\n%s", code, in.stderr)
 	}
 	if alive(pid) {
-		t.Errorf("daemon %d still running after decree-api exited", pid)
+		t.Errorf("daemon %d still running after decree-go-rest exited", pid)
 	}
 	if _, err := os.Stat(filepath.Join(proj, ".decree", "inbox", queued.ID+".md")); !os.IsNotExist(err) {
 		t.Errorf("message %s still in the inbox: %v", queued.ID, err)

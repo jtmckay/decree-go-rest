@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jtmckay/decree-api/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
 // window is one fixed-window rate budget (SPEC.md §6). It is global: every

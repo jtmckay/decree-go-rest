@@ -1,22 +1,22 @@
-# decree-api
+# decree-go-rest
 
-decree-api is the HTTP front door of a [decree](https://github.com/jtmckay/decree) 0.5 project. Endpoints defined in one YAML file turn authenticated `POST`s into decree inbox messages, always through `decree emit`, so ids, validation of the machine and its typed `params`, and trace context stay decree's. It keeps `decree daemon` running, so those messages are processed, and a few built-in endpoints read a run's status and reply to a run waiting for a person. It runs no work itself: decree does. The design, and the source of truth for every behaviour below, is [SPEC.md](SPEC.md).
+decree-go-rest is the HTTP front door of a [decree](https://github.com/jtmckay/decree) 0.5 project. Endpoints defined in one YAML file turn authenticated `POST`s into decree inbox messages, always through `decree emit`, so ids, validation of the machine and its typed `params`, and trace context stay decree's. It keeps `decree daemon` running, so those messages are processed, and a few built-in endpoints read a run's status and reply to a run waiting for a person. It runs no work itself: decree does. The design, and the source of truth for every behaviour below, is [SPEC.md](SPEC.md).
 
 ## Install
 
 Needs Go 1.22 or newer to build, and `decree` 0.5 or newer on `PATH` (or at `decree:` in the config) to run.
 
 ```sh
-go install github.com/jtmckay/decree-api/cmd/decree-api@latest
+go install github.com/jtmckay/decree-go-rest/cmd/decree-go-rest@latest
 ```
 
 or, from a checkout, a static binary:
 
 ```sh
-CGO_ENABLED=0 go build -o decree-api ./cmd/decree-api
+CGO_ENABLED=0 go build -o decree-go-rest ./cmd/decree-go-rest
 ```
 
-`decree-api -version` prints the version it was built from.
+`decree-go-rest -version` prints the version it was built from.
 
 ## Quick start
 
@@ -48,10 +48,10 @@ chmod +x .decree/scripts/notify/send
 decree graph && decree check
 ```
 
-A config, `decree-api.yml`, next to `.decree/`:
+A config, `decree-go-rest.yml`, next to `.decree/`:
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/jtmckay/decree-api/main/decree-api.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/jtmckay/decree-go-rest/main/decree-go-rest.schema.json
 endpoints:
   - path: /notify/{title}
     message:
@@ -62,37 +62,37 @@ endpoints:
 A secret, then run it:
 
 ```sh
-export DECREE_API_SECRET=$(openssl rand -hex 32)
-decree-api -check     # validates the config, the machines and decree; exits 0 or 1
-decree-api            # listens on 127.0.0.1:8801 and supervises `decree daemon`
+export DECREE_GO_REST_SECRET=$(openssl rand -hex 32)
+decree-go-rest -check     # validates the config, the machines and decree; exits 0 or 1
+decree-go-rest            # listens on 127.0.0.1:8801 and supervises `decree daemon`
 ```
 
-From another shell (with the same `DECREE_API_SECRET`):
+From another shell (with the same `DECREE_GO_REST_SECRET`):
 
 ```sh
 curl -sS -X POST http://127.0.0.1:8801/notify/backup \
-  -H "Authorization: Bearer $DECREE_API_SECRET" \
+  -H "Authorization: Bearer $DECREE_GO_REST_SECRET" \
   --data-binary 'The nightly backup finished.'
 # {"id":"20261005T073848Z-734a8f","path":".decree/inbox/20261005T073848Z-734a8f.md","machine":"notify"}
 
 curl -sS http://127.0.0.1:8801/runs/20261005T073848Z-734a8f \
-  -H "Authorization: Bearer $DECREE_API_SECRET"
+  -H "Authorization: Bearer $DECREE_GO_REST_SECRET"
 # decree status <id> --format json: "status": "finished", "state": "done", and the run's events
 ```
 
-Every key of the config, with its default, is in [SPEC.md §3](SPEC.md#3-configuration-decree-apiyml) and in [`decree-api.schema.json`](decree-api.schema.json); [`decree-api.example.yml`](decree-api.example.yml) uses most of them. The config is reloaded when it changes, without restarting the daemon ([§8](SPEC.md#8-reloading-the-config)).
+Every key of the config, with its default, is in [SPEC.md §3](SPEC.md#3-configuration-decree-go-restyml) and in [`decree-go-rest.schema.json`](decree-go-rest.schema.json); [`decree-go-rest.example.yml`](decree-go-rest.example.yml) uses most of them. The config is reloaded when it changes, without restarting the daemon ([§8](SPEC.md#8-reloading-the-config)).
 
 ## Endpoints
 
 Every configured endpoint is a `POST` with `Authorization: Bearer <secret>`. Its body is opaque text, given to `decree emit` on stdin; it answers 201 with `{"id", "path", "machine"}`, 400 when decree rejects the message (with decree's message), and 401, 404, 405, 413 or 429 as [SPEC.md §4](SPEC.md#4-handling-a-request) describes. Every error is JSON, `{"error": "…"}`.
 
-The built-ins ([§7](SPEC.md#7-built-in-endpoints)), each switched off under `builtins:` except `/healthz`:
+The built-ins ([§7](SPEC.md#7-built-in-endpoints)), each an object under `builtins:` (`status: { enabled: false }` switches one off; `/healthz` is always served):
 
 | Endpoint | Auth | Does |
 | --- | --- | --- |
-| `GET /healthz` | none | 200 `{"ok": true, "daemon": {"enabled", "running", "pid", "restarts", "since"}, "config": {"loaded_at", "error": null}}`. 503 with the same body when the daemon is enabled but not running, or the last config reload failed. Exempt from rate limits. `decree-api -healthcheck` requests it, for container health checks with no curl. |
-| `GET /runs/{id}` | default secret | `decree status <id> --format json`: 200 with decree's document unchanged; 404 for an unknown id. |
-| `POST /runs/{wait_id}/replies/{event}` | default secret | `decree event <wait_id> <event> [-m=<body>] --format json`: 201 with decree's `{id, path}`. The body is the optional note. 409 when the run is not waiting, or does not accept the event. |
+| `GET /healthz` | none | 200 `{"ok": true, "daemon": {"enabled", "running", "pid", "restarts", "since"}, "config": {"loaded_at", "error": null}}`. 503 with the same body when the daemon is enabled but not running, or the last config reload failed. Exempt from rate limits. `decree-go-rest -healthcheck` requests it, for container health checks with no curl. |
+| `GET /runs/{id}` | `builtins.status.secret_env`, else the default secret | `decree status <id> --format json`: 200 with decree's document unchanged; 404 for an unknown id. |
+| `POST /runs/{wait_id}/replies/{event}` | `builtins.replies.secret_env`, else the default secret | `decree event <wait_id> <event> [-m=<body>] --format json`: 201 with decree's `{id, path}`. The body is the optional note. 409 when the run is not waiting, or does not accept the event. |
 | `GET /openapi.json` | none | An OpenAPI 3.1 document of every configured endpoint and enabled built-in, generated from the loaded config. |
 
 ## Security
@@ -100,22 +100,23 @@ The built-ins ([§7](SPEC.md#7-built-in-endpoints)), each switched off under `bu
 decree's [SECURITY.md](https://github.com/jtmckay/decree/blob/main/SECURITY.md) applies in full. A message is an instruction to the machines it names, and decree's built-in machines run Claude with your permissions, so **an endpoint secret is as powerful as shell access to whatever those machines do** ([SPEC.md §10](SPEC.md#10-security)).
 
 - **Secrets** come only from the environment and are at least 32 characters. Generate one with `openssl rand -hex 32`. Give an endpoint that reaches a powerful machine its own `secret_env`.
-- **Listen on localhost** (the default). Expose the service only through a TLS reverse proxy, such as Caddy; decree-api does no TLS.
+- **Replies get their own secret.** Answering a run's question, such as an approval, deserves its own secret: set `builtins.replies: { enabled: true, secret_env: DECREE_GO_REST_REPLY_SECRET }`, as the example config does, so a caller that may queue messages cannot also approve them.
+- **Listen on localhost** (the default). Expose the service only through a TLS reverse proxy, such as Caddy; decree-go-rest does no TLS.
 - **Path parameters reach decree only as `--param` values in argv:** no shell, typed by decree, and restricted by their pattern (rejected, never repaired). Bodies reach decree only on stdin.
 - **No endpoint can choose the machine:** `message.machine` is fixed in the config, and a placeholder is not allowed there.
 - **Rate budgets:** authentication comes before either budget, so unauthenticated traffic can exhaust only the failure budget and never locks out a caller holding the right secret.
-- Messages may carry secrets, so decree-api runs with umask `027`, and it never passes its own `DECREE_*` variables on to decree.
+- Messages may carry secrets, so decree-go-rest runs with umask `027`, and it never passes its own `DECREE_*` variables on to decree.
 
 ## Running it as a service
 
-[`deploy/decree-api.service`](deploy/decree-api.service) is a systemd user unit. Put the secrets in `~/.config/decree-api/env` (mode `600`), adjust the paths in the unit, then:
+[`deploy/decree-go-rest.service`](deploy/decree-go-rest.service) is a systemd user unit. Put the secrets in `~/.config/decree-go-rest/env` (mode `600`), adjust the paths in the unit, then:
 
 ```sh
-cp deploy/decree-api.service ~/.config/systemd/user/
+cp deploy/decree-go-rest.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now decree-api
+systemctl --user enable --now decree-go-rest
 loginctl enable-linger "$USER"   # keep it running when you are logged out
-journalctl --user -u decree-api -f
+journalctl --user -u decree-go-rest -f
 ```
 
 There is no container image: the daemon runs the project's scripts, so its environment needs every tool they use. A container is your choice, built on an image that has those tools.

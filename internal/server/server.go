@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jtmckay/decree-api/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
 // ShutdownTimeout bounds how long in-flight requests may finish after
@@ -32,9 +32,10 @@ type Server struct {
 	projectDir string
 	// maxBody is limits.max_body_bytes.
 	maxBody int64
-	// secret is the default secret, which the built-ins under /runs/
-	// take; nil when neither is enabled.
-	secret []byte
+	// statusSecret and replySecret are the secrets of GET /runs/{id} and
+	// POST /runs/{wait_id}/replies/{event}: each its own, or the default
+	// one; nil when that built-in is disabled.
+	statusSecret, replySecret []byte
 	// openapi is the document GET /openapi.json serves.
 	openapi []byte
 	// builtins are the built-in routes served, /healthz first.
@@ -182,14 +183,18 @@ func (s *Server) allowed(r *http.Request) (route, allow string) {
 // handleBuiltins registers /healthz and the built-ins c enables (SPEC.md
 // §7).
 func (s *Server) handleBuiltins(c *config.Config) error {
-	if c.Builtins.Status || c.Builtins.Replies {
-		secret := os.Getenv(c.SecretEnv)
-		if len(secret) < config.MinSecretLen {
-			return fmt.Errorf("secret %s is not set or shorter than %d characters", c.SecretEnv, config.MinSecretLen)
+	var err error
+	if c.Builtins.Status.Enabled {
+		if s.statusSecret, err = builtinSecret(c, c.Builtins.Status); err != nil {
+			return fmt.Errorf("built-in %s: %w", config.StatusPath, err)
 		}
-		s.secret = []byte(secret)
 	}
-	if c.Builtins.OpenAPI {
+	if c.Builtins.Replies.Enabled {
+		if s.replySecret, err = builtinSecret(c, c.Builtins.Replies); err != nil {
+			return fmt.Errorf("built-in %s: %w", config.RepliesPath, err)
+		}
+	}
+	if c.Builtins.OpenAPI.Enabled {
 		doc, err := openAPI(c)
 		if err != nil {
 			return err
@@ -209,6 +214,17 @@ func (s *Server) handleBuiltins(c *config.Config) error {
 		}
 	}
 	return nil
+}
+
+// builtinSecret reads the secret of an authenticated built-in from the
+// environment: its own secret_env, or the top-level one.
+func builtinSecret(c *config.Config, b config.Builtin) ([]byte, error) {
+	env := b.EffectiveSecretEnv(c)
+	secret := os.Getenv(env)
+	if len(secret) < config.MinSecretLen {
+		return nil, fmt.Errorf("secret %s is not set or shorter than %d characters", env, config.MinSecretLen)
+	}
+	return []byte(secret), nil
 }
 
 // methodNotAllowed answers a known route with the wrong method: a 405

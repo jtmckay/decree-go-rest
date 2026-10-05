@@ -29,7 +29,7 @@ func TestLockRefusesSecondInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(dir, ".decree", "decree-api.lock")
+	want := filepath.Join(dir, ".decree", "decree-go-rest.lock")
 	if first.Path() != want {
 		t.Errorf("lock file %s, want %s", first.Path(), want)
 	}

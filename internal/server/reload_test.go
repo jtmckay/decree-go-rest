@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jtmckay/decree-api/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
 const extraEndpoint = `
@@ -26,7 +26,7 @@ const extraEndpoint = `
 // the old one, with a modification time that is surely different.
 func replaceFile(t *testing.T, path, content string, mod time.Time) {
 	t.Helper()
-	tmp := filepath.Join(filepath.Dir(path), ".decree-api.yml.tmp")
+	tmp := filepath.Join(filepath.Dir(path), ".decree-go-rest.yml.tmp")
 	write(t, tmp, content)
 	if err := os.Chtimes(tmp, mod, mod); err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func liveDo(t *testing.T, l *Live, r req) int {
 	if r.method == "" {
 		r.method = http.MethodPost
 	}
-	hr := httptest.NewRequest(r.method, "http://decree-api.test"+r.path, strings.NewReader(r.body))
+	hr := httptest.NewRequest(r.method, "http://decree-go-rest.test"+r.path, strings.NewReader(r.body))
 	if r.bearer != "" {
 		hr.Header.Set("Authorization", "Bearer "+r.bearer)
 	}
@@ -321,4 +321,52 @@ func TestReloadRace(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
+}
+
+// TestReloadBuiltinSecrets: a built-in's changed secret_env takes effect
+// on reload, as an endpoint's does, and a reload whose built-in secret is
+// missing keeps the old table.
+func TestReloadBuiltinSecrets(t *testing.T) {
+	f := newFixture(t, exampleConfig(t))
+	captureLogs(f.srv)
+	l := f.live(t)
+	statusSecret := strings.Repeat("s", 48)
+	newReplySecret := strings.Repeat("n", 33)
+	t.Setenv("STATUS_SECRET", statusSecret)
+	t.Setenv("NEW_REPLY_SECRET", newReplySecret)
+
+	cfg := strings.Replace(exampleConfig(t), "status: { enabled: true }", "status: { enabled: true, secret_env: STATUS_SECRET }", 1)
+	cfg = strings.Replace(cfg, "secret_env: DECREE_GO_REST_REPLY_SECRET", "secret_env: NEW_REPLY_SECRET", 1)
+	if cfg == exampleConfig(t) {
+		t.Fatal("the example config has no built-ins to change")
+	}
+	write(t, f.path, cfg)
+	if err := l.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	for _, c := range []struct {
+		r      req
+		status int
+	}{
+		{req{method: "GET", path: "/runs/r", bearer: secret}, 401},
+		{req{method: "GET", path: "/runs/r", bearer: statusSecret}, 200},
+		{req{path: "/runs/r/replies/approve", bearer: replySecret}, 401},
+		{req{path: "/runs/r/replies/approve", bearer: newReplySecret}, 201},
+		{req{path: "/notify/backup", bearer: secret, body: "x"}, 201},
+	} {
+		if got := liveDo(t, l, c.r); got != c.status {
+			t.Errorf("%s %s with %.1s…: %d, want %d", c.r.method, c.r.path, c.r.bearer, got, c.status)
+		}
+	}
+
+	// A built-in secret that is not set fails the reload; the table that
+	// serves keeps the secrets it had.
+	write(t, f.path, strings.Replace(cfg, "secret_env: NEW_REPLY_SECRET", "secret_env: UNSET_REPLY_SECRET", 1))
+	err := l.Reload()
+	if err == nil || !strings.Contains(err.Error(), "UNSET_REPLY_SECRET is not set") {
+		t.Fatalf("reload with an unset built-in secret: %v", err)
+	}
+	if got := liveDo(t, l, req{path: "/runs/r/replies/approve", bearer: newReplySecret}); got != 201 {
+		t.Errorf("reply after the failed reload: %d, want 201", got)
+	}
 }

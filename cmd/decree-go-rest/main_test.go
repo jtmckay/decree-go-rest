@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jtmckay/decree-api/internal/config"
-	"github.com/jtmckay/decree-api/internal/decreetest"
+	"github.com/jtmckay/decree-go-rest/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/decreetest"
 )
 
 const (
@@ -46,25 +46,26 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-// exampleProject copies decree-api.example.yml into a temp project that
+// exampleProject copies decree-go-rest.example.yml into a temp project that
 // holds the machines it names, puts a stub decree on PATH, sets the
 // secrets, and returns the config path and the stub.
 func exampleProject(t *testing.T) (string, *decreetest.Stub) {
 	t.Helper()
-	example, err := os.ReadFile("../../decree-api.example.yml")
+	example, err := os.ReadFile("../../decree-go-rest.example.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	proj := t.TempDir()
 	write(t, config.MachineFile(proj, "notify"), notifyMachine)
 	write(t, config.MachineFile(proj, "comfy_image"), comfyMachine)
-	path := filepath.Join(proj, "decree-api.yml")
+	path := filepath.Join(proj, "decree-go-rest.yml")
 	write(t, path, string(example))
 	stub := decreetest.New(t)
 	stub.OnPath(t)
 	t.Setenv(config.ListenEnv, "")
-	t.Setenv("DECREE_API_SECRET", strings.Repeat("a", 64))
+	t.Setenv("DECREE_GO_REST_SECRET", strings.Repeat("a", 64))
 	t.Setenv("COMFY_SECRET", strings.Repeat("b", 32))
+	t.Setenv("DECREE_GO_REST_REPLY_SECRET", strings.Repeat("c", 40))
 	return path, stub
 }
 
@@ -153,7 +154,7 @@ func TestCheckUnreadableConfig(t *testing.T) {
 	if code != 1 || !strings.Contains(errOut, "config invalid") {
 		t.Errorf("missing file: exit %d, stderr %q", code, errOut)
 	}
-	path := filepath.Join(dir, "decree-api.yml")
+	path := filepath.Join(dir, "decree-go-rest.yml")
 	write(t, path, "endpoints: []\nlisten_on: x\n")
 	code, _, errOut = runCLI("-check", "-config", path)
 	if code != 1 || !strings.Contains(errOut, "listen_on") {
@@ -173,18 +174,18 @@ func TestCommandLine(t *testing.T) {
 	}
 }
 
-// schemaLine is the first line of decree-api.example.yml, which points
-// editors at decree-api.schema.json (SPEC.md §11).
-const schemaLine = "# yaml-language-server: $schema=decree-api.schema.json\n"
+// schemaLine is the first line of decree-go-rest.example.yml, which points
+// editors at decree-go-rest.schema.json (SPEC.md §11).
+const schemaLine = "# yaml-language-server: $schema=decree-go-rest.schema.json\n"
 
-// TestExampleMatchesSpec keeps decree-api.example.yml the example of
+// TestExampleMatchesSpec keeps decree-go-rest.example.yml the example of
 // SPEC.md §3, below its $schema line.
 func TestExampleMatchesSpec(t *testing.T) {
 	spec, err := os.ReadFile("../../SPEC.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	example, err := os.ReadFile("../../decree-api.example.yml")
+	example, err := os.ReadFile("../../decree-go-rest.example.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,10 +198,10 @@ func TestExampleMatchesSpec(t *testing.T) {
 	s = s[:strings.Index(s, "```")]
 	rest, ok := strings.CutPrefix(string(example), schemaLine)
 	if !ok {
-		t.Errorf("decree-api.example.yml does not start with %q", schemaLine)
+		t.Errorf("decree-go-rest.example.yml does not start with %q", schemaLine)
 	}
 	if s != rest {
-		t.Errorf("decree-api.example.yml differs from SPEC.md §3's example")
+		t.Errorf("decree-go-rest.example.yml differs from SPEC.md §3's example")
 	}
 }
 
@@ -246,17 +247,17 @@ endpoints:
 	}
 }
 
-// TestVersionFlag: -version prints decree-api's version and exits 0, the
+// TestVersionFlag: -version prints decree-go-rest's version and exits 0, the
 // linker's version first.
 func TestVersionFlag(t *testing.T) {
 	code, out, _ := runCLI("-version")
-	if code != 0 || !strings.HasPrefix(out, "decree-api ") || strings.TrimSpace(out) == "decree-api" {
+	if code != 0 || !strings.HasPrefix(out, "decree-go-rest ") || strings.TrimSpace(out) == "decree-go-rest" {
 		t.Errorf("-version: exit %d, stdout %q", code, out)
 	}
 	old := version
 	version = "v1.2.3"
 	defer func() { version = old }()
-	if code, out, _ := runCLI("-version", "-check"); code != 0 || out != "decree-api v1.2.3\n" {
+	if code, out, _ := runCLI("-version", "-check"); code != 0 || out != "decree-go-rest v1.2.3\n" {
 		t.Errorf("-version with a linker version: exit %d, stdout %q", code, out)
 	}
 }

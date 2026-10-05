@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/jtmckay/decree-api/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
 // Bodies of the built-ins' 500s; the details are logged.
@@ -18,11 +18,11 @@ const (
 
 var runIDRE = regexp.MustCompile(`^(?:` + config.RunIDPattern + `)$`)
 
-// admit authenticates a request to a built-in under /runs/ with the
-// default secret, then spends from rate_max, as SPEC.md §4 steps 2–3 do
+// admit authenticates a request to a built-in under /runs/ with that
+// built-in's secret, then spends from rate_max, as SPEC.md §4 steps 2–3 do
 // for a configured endpoint. It answers the request when it returns false.
-func (s *Server) admit(w http.ResponseWriter, r *http.Request) bool {
-	if !authorized(r, s.secret) {
+func (s *Server) admit(w http.ResponseWriter, r *http.Request, secret []byte) bool {
+	if !authorized(r, secret) {
 		s.reject(w, http.StatusUnauthorized, "unauthorized", func(h http.Header) {
 			h.Set("WWW-Authenticate", "Bearer")
 		})
@@ -51,7 +51,7 @@ func runParams(r *http.Request, names ...string) string {
 // unchanged, or 404 when decree does not know the run.
 func (s *Server) serveStatus(w http.ResponseWriter, r *http.Request) {
 	logged(r).route = config.StatusPath
-	if !s.admit(w, r) {
+	if !s.admit(w, r, s.statusSecret) {
 		return
 	}
 	if msg := runParams(r, "id"); msg != "" {
@@ -90,7 +90,7 @@ func (s *Server) serveStatus(w http.ResponseWriter, r *http.Request) {
 // optional note.
 func (s *Server) serveReply(w http.ResponseWriter, r *http.Request) {
 	logged(r).route = config.RepliesPath
-	if !s.admit(w, r) {
+	if !s.admit(w, r, s.replySecret) {
 		return
 	}
 	if msg := runParams(r, "wait_id", "event"); msg != "" {

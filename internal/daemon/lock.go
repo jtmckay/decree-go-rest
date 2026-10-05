@@ -8,11 +8,11 @@ import (
 )
 
 // LockName is the lock file in the project's .decree directory, the only
-// file decree-api creates there (SPEC.md §2, §5).
-const LockName = "decree-api.lock"
+// file decree-go-rest creates there (SPEC.md §2, §5).
+const LockName = "decree-go-rest.lock"
 
-// ErrLocked is returned by Lock when another decree-api holds the lock.
-var ErrLocked = errors.New("another decree-api is running for this project")
+// ErrLocked is returned by Lock when another decree-go-rest holds the lock.
+var ErrLocked = errors.New("another decree-go-rest is running for this project")
 
 // LockFile is the lock file of a project.
 func LockFile(projectDir string) string {

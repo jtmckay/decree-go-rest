@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/jtmckay/decree-api/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
 // OpenAPIVersion is the version of the OpenAPI document served at
@@ -41,10 +41,7 @@ func openAPI(c *config.Config) ([]byte, error) {
 			}
 			params = append(params, pathParameter(name, pat, MaxParamBytes))
 		}
-		secret := "the default bearer secret"
-		if e.SecretEnv != "" && e.SecretEnv != c.SecretEnv {
-			secret = "its own bearer secret"
-		}
+		secret := secretName(c, e.SecretEnv)
 		op := obj{
 			"summary":     "Queue a message for machine " + e.Message.Machine,
 			"description": fmt.Sprintf("Runs `decree emit --machine %s`, with the body on stdin. Authenticated with %s.", e.Message.Machine, secret),
@@ -84,7 +81,7 @@ func openAPI(c *config.Config) ([]byte, error) {
 		case config.StatusPath:
 			add(rt.Path, "get", obj{
 				"summary":     "A run's status",
-				"description": "Runs `decree status <id> --format json`. Authenticated with the default bearer secret.",
+				"description": "Runs `decree status <id> --format json`. Authenticated with " + secretName(c, c.Builtins.Status.SecretEnv) + ".",
 				"security":    bearer,
 				"parameters":  []any{pathParameter("id", config.RunIDPattern, 0)},
 				"responses": obj{
@@ -99,7 +96,7 @@ func openAPI(c *config.Config) ([]byte, error) {
 		case config.RepliesPath:
 			add(rt.Path, "post", obj{
 				"summary":     "Reply to a run waiting for a person",
-				"description": "Runs `decree event <wait_id> <event> [-m=<note>] --format json`. Authenticated with the default bearer secret.",
+				"description": "Runs `decree event <wait_id> <event> [-m=<note>] --format json`. Authenticated with " + secretName(c, c.Builtins.Replies.SecretEnv) + ".",
 				"security":    bearer,
 				"parameters": []any{
 					pathParameter("wait_id", config.RunIDPattern, 0),
@@ -130,7 +127,7 @@ func openAPI(c *config.Config) ([]byte, error) {
 	doc := document{
 		OpenAPI: OpenAPIVersion,
 		Info: obj{
-			"title":       "decree-api",
+			"title":       "decree-go-rest",
 			"version":     "1",
 			"description": "The HTTP front door of a decree project: each endpoint queues a decree message.",
 		},
@@ -150,6 +147,15 @@ func openAPI(c *config.Config) ([]byte, error) {
 		return nil, fmt.Errorf("openapi document: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// secretName says which bearer secret an operation whose secret_env is env
+// takes, without naming the variable.
+func secretName(c *config.Config, env string) string {
+	if env != "" && env != c.SecretEnv {
+		return "its own bearer secret"
+	}
+	return "the default bearer secret"
 }
 
 // document is the top level of the OpenAPI document, in the usual order.
@@ -243,7 +249,7 @@ var schemas = obj{
 }
 
 // pathParameter is a path parameter matching pattern, anchored as
-// decree-api matches it, of at most maxLength bytes when that is not 0.
+// decree-go-rest matches it, of at most maxLength bytes when that is not 0.
 func pathParameter(name, pattern string, maxLength int) obj {
 	schema := obj{"type": "string", "pattern": "^(?:" + pattern + ")$"}
 	if maxLength > 0 {

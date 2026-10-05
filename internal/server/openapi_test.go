@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jtmckay/decree-api/internal/config"
+	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
 // getOpenAPI requests GET /openapi.json from h, with no secret.
 func getOpenAPI(t *testing.T, h http.Handler) (raw string, doc map[string]any) {
 	t.Helper()
-	hr := httptest.NewRequest(http.MethodGet, "http://decree-api.test/openapi.json", nil)
+	hr := httptest.NewRequest(http.MethodGet, "http://decree-go-rest.test/openapi.json", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, hr)
 	if rec.Code != http.StatusOK {
@@ -122,7 +122,7 @@ func TestOpenAPIShape(t *testing.T) {
 // TestOpenAPIBuiltinsSwitch: a disabled built-in is neither served nor in
 // the document, and /openapi.json itself can be switched off.
 func TestOpenAPIBuiltinsSwitch(t *testing.T) {
-	cfg := strings.Replace(exampleConfig(t), "status: true", "status: false", 1)
+	cfg := strings.Replace(exampleConfig(t), "status: { enabled: true }", "status: { enabled: false }", 1)
 	f := newFixture(t, cfg)
 	_, doc := getOpenAPI(t, f.srv)
 	paths := doc["paths"].(map[string]any)
@@ -133,7 +133,7 @@ func TestOpenAPIBuiltinsSwitch(t *testing.T) {
 		t.Errorf("the replies built-in is missing")
 	}
 
-	f = newFixture(t, strings.Replace(exampleConfig(t), "openapi: true", "openapi: false", 1))
+	f = newFixture(t, strings.Replace(exampleConfig(t), "openapi: { enabled: true }", "openapi: { enabled: false }", 1))
 	if rec := f.do(t, req{method: "GET", path: "/openapi.json"}); rec.Code != http.StatusNotFound {
 		t.Errorf("disabled: status %d, want 404", rec.Code)
 	}

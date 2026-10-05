@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "description": "The HTTP front door of a decree project: each endpoint queues a decree message.",
-    "title": "decree-api",
+    "title": "decree-go-rest",
     "version": "1"
   },
   "paths": {
@@ -456,7 +456,7 @@
     },
     "/runs/{wait_id}/replies/{event}": {
       "post": {
-        "description": "Runs `decree event <wait_id> <event> [-m=<note>] --format json`. Authenticated with the default bearer secret.",
+        "description": "Runs `decree event <wait_id> <event> [-m=<note>] --format json`. Authenticated with its own bearer secret.",
         "parameters": [
           {
             "in": "path",

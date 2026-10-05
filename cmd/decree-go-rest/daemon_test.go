@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jtmckay/decree-api/internal/daemon"
-	"github.com/jtmckay/decree-api/internal/decreetest"
+	"github.com/jtmckay/decree-go-rest/internal/daemon"
+	"github.com/jtmckay/decree-go-rest/internal/decreetest"
 )
 
-// syncBuffer is a stderr that a test may read while decree-api writes it.
+// syncBuffer is a stderr that a test may read while decree-go-rest writes it.
 type syncBuffer struct {
 	mu sync.Mutex
 	b  bytes.Buffer
@@ -36,24 +36,24 @@ func (b *syncBuffer) String() string {
 	return b.b.String()
 }
 
-// instance is a decree-api running in the test process.
+// instance is a decree-go-rest running in the test process.
 type instance struct {
 	addr   string
 	stderr *syncBuffer
 	exited chan int
 }
 
-// serve runs decree-api on the config at path and waits until /healthz
+// serve runs decree-go-rest on the config at path and waits until /healthz
 // answers.
 func serve(t *testing.T, path string) *instance {
 	t.Helper()
 	in := &instance{addr: freeAddr(t), stderr: &syncBuffer{}, exited: make(chan int, 1)}
-	t.Setenv("DECREE_API_LISTEN", in.addr)
+	t.Setenv("DECREE_GO_REST_LISTEN", in.addr)
 	go func() { in.exited <- run([]string{"-config", path}, &bytes.Buffer{}, in.stderr) }()
-	waitFor(t, "decree-api to listen", func() bool {
+	waitFor(t, "decree-go-rest to listen", func() bool {
 		select {
 		case code := <-in.exited:
-			t.Fatalf("decree-api exited %d: %s", code, in.stderr)
+			t.Fatalf("decree-go-rest exited %d: %s", code, in.stderr)
 		default:
 		}
 		resp, err := http.Get("http://" + in.addr + "/healthz")
@@ -81,7 +81,7 @@ func (in *instance) health(t *testing.T) (int, map[string]any) {
 	return resp.StatusCode, body
 }
 
-// terminate sends decree-api SIGTERM and returns its exit code.
+// terminate sends decree-go-rest SIGTERM and returns its exit code.
 func (in *instance) terminate(t *testing.T, within time.Duration) int {
 	t.Helper()
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
@@ -96,7 +96,7 @@ func (in *instance) wait(t *testing.T, within time.Duration) int {
 	case code := <-in.exited:
 		return code
 	case <-time.After(within):
-		t.Fatalf("decree-api did not exit within %v; stderr:\n%s", within, in.stderr)
+		t.Fatalf("decree-go-rest did not exit within %v; stderr:\n%s", within, in.stderr)
 		return -1
 	}
 }
@@ -114,7 +114,7 @@ func alive(pid int) bool {
 }
 
 // TestAcceptanceDaemonRestarts is the first acceptance criterion: with a
-// stub daemon that exits after one second, decree-api restarts it with
+// stub daemon that exits after one second, decree-go-rest restarts it with
 // growing delays, and /healthz is 503 while it is down.
 func TestAcceptanceDaemonRestarts(t *testing.T) {
 	path, stub := exampleProject(t)
@@ -220,7 +220,7 @@ func TestAcceptanceShutdownOrder(t *testing.T) {
 		t.Errorf("SIGTERMs %+v, want one to %d", terms, pid)
 	}
 	if alive(pid) {
-		t.Error("the daemon outlived decree-api")
+		t.Error("the daemon outlived decree-go-rest")
 	}
 	if logs := in.stderr.String(); strings.Contains(logs, "killing it") {
 		t.Errorf("killed a daemon that exited on SIGTERM:\n%s", logs)
@@ -248,7 +248,7 @@ func TestAcceptanceShutdownKillsAfter15s(t *testing.T) {
 	}
 	select {
 	case code := <-in.exited:
-		t.Fatalf("decree-api exited %d before 15 s", code)
+		t.Fatalf("decree-go-rest exited %d before 15 s", code)
 	default:
 	}
 	if code := in.wait(t, 5*time.Second); code != 0 {
@@ -268,7 +268,7 @@ func TestAcceptanceShutdownKillsAfter15s(t *testing.T) {
 	}
 }
 
-// TestSecondInstanceRefused: a second decree-api for the same project
+// TestSecondInstanceRefused: a second decree-go-rest for the same project
 // exits 1 with an error naming the lock, and starts no daemon.
 func TestSecondInstanceRefused(t *testing.T) {
 	path, stub := exampleProject(t)
@@ -277,7 +277,7 @@ func TestSecondInstanceRefused(t *testing.T) {
 
 	code, _, errOut := runCLI("-config", path)
 	lock := filepath.Join(filepath.Dir(path), ".decree", daemon.LockName)
-	if code != 1 || !strings.Contains(errOut, lock) || !strings.Contains(errOut, "another decree-api is running") {
+	if code != 1 || !strings.Contains(errOut, lock) || !strings.Contains(errOut, "another decree-go-rest is running") {
 		t.Errorf("second instance: exit %d, stderr %q; want 1 naming %s", code, errOut, lock)
 	}
 	if n := len(stub.DaemonEvents(t, "start")); n != 1 {

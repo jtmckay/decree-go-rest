@@ -1,6 +1,6 @@
-# decree-api: specification
+# decree-go-rest: specification
 
-decree-api is the HTTP front door of a [decree](https://github.com/jtmckay/decree) 0.5 project:
+decree-go-rest is the HTTP front door of a [decree](https://github.com/jtmckay/decree) 0.5 project:
 
 - endpoints, defined in one YAML file, turn authenticated `POST`s into decree inbox messages;
 - it keeps `decree daemon` running, so those messages are processed;
@@ -16,9 +16,9 @@ This file is the source of truth while the service is built. The migrations in `
 
 **Goals:**
 
-- Endpoints are configuration, not code. Adding one means editing `decree-api.yml`; there is no route table in the code.
+- Endpoints are configuration, not code. Adding one means editing `decree-go-rest.yml`; there is no route table in the code.
 - **Every message is written by `decree emit`**, so ids, atomic writes, validation of the machine and its typed `params`, and trace context are decree's, not reimplemented.
-- **One process to run:** decree-api supervises `decree daemon`.
+- **One process to run:** decree-go-rest supervises `decree daemon`.
 - **Safe to expose behind a TLS reverse proxy:** per-endpoint bearer secrets, request limits, rate budgets that unauthenticated traffic cannot exhaust for real callers.
 - **Standard, discoverable:** an OpenAPI 3.1 document generated from the config, JSON responses, W3C Trace Context passed through to the run.
 
@@ -34,23 +34,23 @@ This file is the source of truth while the service is built. The migrations in `
 ## 2. Architecture
 
 ```text
-client --POST /notify/backup--> decree-api --exec--> decree emit --machine notify --param title=backup
+client --POST /notify/backup--> decree-go-rest --exec--> decree emit --machine notify --param title=backup
                                     |                        |
                                     | supervises             v  writes .decree/inbox/<id>.md
                                     v                        |
                               decree daemon  <---------------+  claims it, runs machine `notify`
 ```
 
-decree-api is one static Go binary (Go 1.22 or newer, for `net/http` path patterns). Its only dependency outside the standard library is `gopkg.in/yaml.v3`. It runs `decree` (0.5 or newer, found on `PATH` or at `decree:` in the config) as a child process. It never writes messages or runs itself; the only file it creates in `.decree/` is its lock (§5).
+decree-go-rest is one static Go binary (Go 1.22 or newer, for `net/http` path patterns). Its only dependency outside the standard library is `gopkg.in/yaml.v3`. It runs `decree` (0.5 or newer, found on `PATH` or at `decree:` in the config) as a child process. It never writes messages or runs itself; the only file it creates in `.decree/` is its lock (§5).
 
-## 3. Configuration: `decree-api.yml`
+## 3. Configuration: `decree-go-rest.yml`
 
-The binary reads the file named by `-config` (default `./decree-api.yml`). A full example:
+The binary reads the file named by `-config` (default `./decree-go-rest.yml`). A full example:
 
 ```yaml
 project: .                          # the directory that holds .decree/ (relative to this file)
 listen: 127.0.0.1:8801              # keep it on localhost behind a reverse proxy
-secret_env: DECREE_API_SECRET       # the default bearer secret, read from this environment variable
+secret_env: DECREE_GO_REST_SECRET   # the default bearer secret, read from this environment variable
 decree: decree                      # the decree binary; a name on PATH or a path
 
 daemon:
@@ -64,9 +64,10 @@ limits:
   rate_fail_max: 10                 # rejected requests per window (bad auth, unknown path, wrong method)
 
 builtins:
-  status: true                      # GET  /runs/{id}
-  replies: true                     # POST /runs/{wait_id}/replies/{event}
-  openapi: true                     # GET  /openapi.json (no auth; it reveals paths, not secrets)
+  status: { enabled: true }         # GET  /runs/{id}; secret_env optional: the top-level secret
+  # Answering a run's question, such as an approval, deserves its own secret.
+  replies: { enabled: true, secret_env: DECREE_GO_REST_REPLY_SECRET }   # POST /runs/{wait_id}/replies/{event}
+  openapi: { enabled: true }        # GET  /openapi.json (no auth; it reveals paths, not secrets)
 
 endpoints:
   - path: /notify
@@ -97,12 +98,13 @@ endpoints:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `project` | `.` | Directory holding `.decree/`, relative to the config file. |
-| `listen` | `127.0.0.1:8801` | Address to listen on. Overridden by `DECREE_API_LISTEN` if set. |
-| `secret_env` | `DECREE_API_SECRET` | Environment variable holding the default bearer secret. Secrets never appear in the file, so it can be committed. |
+| `listen` | `127.0.0.1:8801` | Address to listen on. Overridden by `DECREE_GO_REST_LISTEN` if set. |
+| `secret_env` | `DECREE_GO_REST_SECRET` | Environment variable holding the default bearer secret. Secrets never appear in the file, so it can be committed. |
 | `decree` | `decree` | The decree binary. |
 | `daemon.enabled` / `daemon.interval` | `true` / `2s` | Supervise `decree daemon --interval <interval>`. |
 | `limits.*` | as above | Request body cap, and the two rate budgets ([§6](#6-limits)). |
-| `builtins.*` | all `true` | The built-in endpoints ([§7](#7-built-in-endpoints)). |
+| `builtins.<name>.enabled` | `true` | Serve the built-in endpoint `status`, `replies` or `openapi` ([§7](#7-built-in-endpoints)). Each built-in is an object: a bare `true` or `false` is a config error. |
+| `builtins.status.secret_env` / `builtins.replies.secret_env` | the top-level one | This built-in's own secret, validated as in step 6 when the built-in is enabled. `openapi` takes no auth, so `builtins.openapi.secret_env` is a config error. |
 | `endpoints[].path` | | `/` followed by literal segments and `{name}` segments. One full segment per parameter. |
 | `endpoints[].secret_env` | the top-level one | This endpoint's secret. |
 | `endpoints[].patterns` | | Per-parameter regular expression (Go RE2), anchored automatically. It replaces the default pattern `[A-Za-z0-9_\-!]+`. |
@@ -120,7 +122,7 @@ endpoints:
 6. **Secrets:** each referenced environment variable is set, non-blank, and at least 32 characters long.
 7. **decree:** the `decree` binary runs, `decree --version` reports 0.5 or newer, and `decree check --format json` in the project reports `"valid": true`.
 
-`decree-api -check -config <file>` runs exactly this validation, prints the result and exits 0 or 1, without listening.
+`decree-go-rest -check -config <file>` runs exactly this validation, prints the result and exits 0 or 1, without listening.
 
 ## 4. Handling a request
 
@@ -142,7 +144,7 @@ The order is fixed. It is what makes the rate budgets fair ([§6](#6-limits)).
    - **Working directory:** the project root.
    - **Stdin:** the body.
    - **Params:** each takes its value with placeholders substituted, in the order the config lists them.
-   - **Environment:** the service's, minus every `DECREE_*` variable, so a decree-api started from a decree script cannot pass a run's identity on. `TRACEPARENT` and `TRACESTATE` are set from the request's `traceparent` and `tracestate` headers when they are valid W3C Trace Context, and removed otherwise, so the run joins the caller's trace.
+   - **Environment:** the service's, minus every `DECREE_*` variable, so a decree-go-rest started from a decree script cannot pass a run's identity on. `TRACEPARENT` and `TRACESTATE` are set from the request's `traceparent` and `tracestate` headers when they are valid W3C Trace Context, and removed otherwise, so the run joins the caller's trace.
    - **Mode:** the service runs with umask `027`, so messages, which may carry secrets, are not world-readable.
    - **Timeout:** 10 s.
 7. **Respond.**
@@ -159,11 +161,11 @@ Every error response is JSON, `{"error": "<message>"}`, with `Content-Type: appl
 
 When `daemon.enabled` is true:
 
-- **Start.** decree-api starts `decree daemon --interval <interval>` in the project after validation and before it listens.
-- **Logs.** The daemon's stdout and stderr go to decree-api's log, one record per line, tagged `source=daemon` and `stream=stdout|stderr`.
-- **Restart.** If the daemon exits, decree-api restarts it after a back-off (1 s, doubling to 60 s at most). The back-off resets once the daemon has run for 5 minutes. Each restart is logged with the exit status.
-- **Shutdown.** On SIGTERM or SIGINT, decree-api stops accepting requests and finishes in-flight ones (up to 10 s). It then sends SIGTERM to the daemon and waits up to 15 s; decree then interrupts the running script, records `interrupted` and exits. Only after that does it send SIGKILL.
-- **One daemon only.** decree-api never runs two daemons for one project. It holds an exclusive `flock` on `<project>/.decree/decree-api.lock` while it runs, and a second decree-api for the same project exits with an error.
+- **Start.** decree-go-rest starts `decree daemon --interval <interval>` in the project after validation and before it listens.
+- **Logs.** The daemon's stdout and stderr go to decree-go-rest's log, one record per line, tagged `source=daemon` and `stream=stdout|stderr`.
+- **Restart.** If the daemon exits, decree-go-rest restarts it after a back-off (1 s, doubling to 60 s at most). The back-off resets once the daemon has run for 5 minutes. Each restart is logged with the exit status.
+- **Shutdown.** On SIGTERM or SIGINT, decree-go-rest stops accepting requests and finishes in-flight ones (up to 10 s). It then sends SIGTERM to the daemon and waits up to 15 s; decree then interrupts the running script, records `interrupted` and exits. Only after that does it send SIGKILL.
+- **One daemon only.** decree-go-rest never runs two daemons for one project. It holds an exclusive `flock` on `<project>/.decree/decree-go-rest.lock` while it runs, and a second decree-go-rest for the same project exits with an error.
 - **`/healthz`** reports the daemon's state ([§7](#7-built-in-endpoints)).
 
 A config change never restarts the daemon, because that would interrupt the running script and leave the run waiting for `decree process --retry`.
@@ -183,19 +185,19 @@ A config change never restarts the daemon, because that would interrupt the runn
 | Endpoint | Auth | Does |
 | --- | --- | --- |
 | `GET /healthz` | none | 200 `{"ok": true, "daemon": {"enabled", "running", "pid", "restarts", "since"}, "config": {"loaded_at", "error": null}}`. 503 with the same body when the daemon is enabled but not running, or the last config reload failed. Exempt from rate limits. |
-| `GET /runs/{id}` | default secret | `decree status <id> --format json` in the project: 200 with decree's document unchanged; 404 when decree exits 1 (an unknown id). `id` must match `[A-Za-z0-9._-]{1,128}`. |
-| `POST /runs/{wait_id}/replies/{event}` | default secret | `decree event <wait_id> <event> [-m=<body>] --format json`: 201 with decree's `{id, path}`. The note goes as one argv entry, `-m=<body>`, so a note that starts with `-` is never read as an option; it is the body unchanged (no newline added), and an empty body passes no `-m`. 409 when decree exits 1 (the run is not waiting, or does not accept the event). The body is the optional note, under the same body cap. |
+| `GET /runs/{id}` | `builtins.status.secret_env`, else the default secret | `decree status <id> --format json` in the project: 200 with decree's document unchanged; 404 when decree exits 1 (an unknown id). `id` must match `[A-Za-z0-9._-]{1,128}`. |
+| `POST /runs/{wait_id}/replies/{event}` | `builtins.replies.secret_env`, else the default secret | `decree event <wait_id> <event> [-m=<body>] --format json`: 201 with decree's `{id, path}`. The note goes as one argv entry, `-m=<body>`, so a note that starts with `-` is never read as an option; it is the body unchanged (no newline added), and an empty body passes no `-m`. 409 when decree exits 1 (the run is not waiting, or does not accept the event). The body is the optional note, under the same body cap. |
 | `GET /openapi.json` | none | An OpenAPI 3.1 document of every configured endpoint and enabled built-in: paths, path parameters with their patterns, the bearer scheme, request bodies as `text/plain`, and the responses above. Generated from the loaded config. |
 
 A configured endpoint may not use a path under `/runs/`, `/healthz` or `/openapi.json` while the matching built-in is enabled (a startup error).
 
 ## 8. Reloading the config
 
-- **When.** decree-api polls the config file's modification time every 2 s, polling rather than watching, because editors and bind mounts replace the inode.
-- **What it does.** On a change it waits 300 ms, so it never reads a half-written file, then loads and fully validates the new config ([§3](#3-configuration-decree-apiyml), steps 1–6; step 7 only when `decree` or `project` changed).
-- **If the new config is valid,** decree-api swaps the route table atomically: requests in flight finish on the old one. The daemon is not restarted.
-- **If it is invalid,** decree-api keeps serving the old config, logs every error, and reports it in `/healthz` until a valid config loads.
-- **What reload cannot change:** `listen`, `project` and `daemon.*` take effect only on restart, and decree-api logs a warning saying so.
+- **When.** decree-go-rest polls the config file's modification time every 2 s, polling rather than watching, because editors and bind mounts replace the inode.
+- **What it does.** On a change it waits 300 ms, so it never reads a half-written file, then loads and fully validates the new config ([§3](#3-configuration-decree-go-restyml), steps 1–6; step 7 only when `decree` or `project` changed).
+- **If the new config is valid,** decree-go-rest swaps the route table atomically: requests in flight finish on the old one. The new table reads every secret again, so a changed `secret_env`, an endpoint's or a built-in's, takes effect. The daemon is not restarted.
+- **If it is invalid,** decree-go-rest keeps serving the old config, logs every error, and reports it in `/healthz` until a valid config loads.
+- **What reload cannot change:** `listen`, `project` and `daemon.*` take effect only on restart, and decree-go-rest logs a warning saying so.
 
 ## 9. Logging and tracing
 
@@ -203,13 +205,14 @@ A configured endpoint may not use a path under `/runs/`, `/healthz` or `/openapi
 - **One record per request:** `method`, `route` (the configured pattern, never the raw path, so parameter values stay out of logs), `status`, `duration_ms`, `message_id` when one was queued, and `trace_id` when the request carried a valid `traceparent`.
 - **Never logged:** secrets, bodies and parameter values.
 - **Startup records** list every route, the machine it emits to, and the daemon command line.
-- **Traces.** decree writes the trace itself (`runs/<id>/traces.jsonl`). decree-api only passes `traceparent` on, so a caller that traces its request sees the decree run as part of the same trace.
+- **Traces.** decree writes the trace itself (`runs/<id>/traces.jsonl`). decree-go-rest only passes `traceparent` on, so a caller that traces its request sees the decree run as part of the same trace.
 
 ## 10. Security
 
 decree's [SECURITY.md](https://github.com/jtmckay/decree/blob/main/SECURITY.md) applies in full. A message is an instruction to the machines it names, and decree's built-in machines run Claude with your permissions. So an endpoint secret is as powerful as shell access to whatever those machines do. Hence:
 
 - **Secrets** come only from the environment and are at least 32 characters. Generate one with `openssl rand -hex 32`. Give an endpoint that reaches a powerful machine its own `secret_env`.
+- **Replies get their own secret.** `POST /runs/{wait_id}/replies/{event}` answers a question a run is waiting on, often an approval. Answering a run's question, such as an approval, deserves its own secret: set `builtins.replies.secret_env`, so a caller that may queue messages cannot also approve them. `builtins.status.secret_env` does the same for reading runs.
 - **Listen on localhost by default.** Expose the service only through a TLS reverse proxy.
 - **Path parameters reach decree only as `--param` values in argv:** no shell, typed by decree, and restricted by their pattern. Bodies reach decree only on stdin.
 - **No endpoint can choose the machine:** `message.machine` is fixed in the config, and a placeholder is not allowed there.
@@ -217,16 +220,16 @@ decree's [SECURITY.md](https://github.com/jtmckay/decree/blob/main/SECURITY.md) 
 ## 11. Command line and packaging
 
 ```text
-decree-api [-config decree-api.yml] [-check] [-healthcheck]
+decree-go-rest [-config decree-go-rest.yml] [-check] [-healthcheck]
 ```
 
-- **`-check`:** validate the config ([§3](#3-configuration-decree-apiyml)) and exit.
+- **`-check`:** validate the config ([§3](#3-configuration-decree-go-restyml)) and exit.
 - **`-healthcheck`:** request `GET /healthz` on the configured listen address, then exit 0 on 200 and 1 otherwise. This is for container health checks with no curl.
 - **Releases:** a static binary (`CGO_ENABLED=0`).
-- **`deploy/decree-api.service`:** a systemd user unit (`Restart=on-failure`, `EnvironmentFile=` for the secrets, `KillSignal=SIGTERM`, `TimeoutStopSec=40`).
-- **`decree-api.example.yml`:** the example config.
-- **`decree-api.schema.json`:** a JSON Schema of the config, so an editor completes keys. Point a config at it with `# yaml-language-server: $schema=…`, as decree's machines do.
-- **No container image.** decree-api's daemon runs the project's scripts, so its environment needs every tool those scripts use. A container is the user's choice, built on an image that has those tools.
+- **`deploy/decree-go-rest.service`:** a systemd user unit (`Restart=on-failure`, `EnvironmentFile=` for the secrets, `KillSignal=SIGTERM`, `TimeoutStopSec=40`).
+- **`decree-go-rest.example.yml`:** the example config.
+- **`decree-go-rest.schema.json`:** a JSON Schema of the config, so an editor completes keys. Point a config at it with `# yaml-language-server: $schema=…`, as decree's machines do.
+- **No container image.** decree-go-rest's daemon runs the project's scripts, so its environment needs every tool those scripts use. A container is the user's choice, built on an image that has those tools.
 
 ## 12. Testing
 
@@ -243,20 +246,20 @@ decree-api [-config decree-api.yml] [-check] [-healthcheck]
   - `traceparent` passed only when valid.
 - **Supervision tests** with a stub daemon: restart with back-off, back-off reset, graceful SIGTERM, then SIGKILL after the timeout, and the lock refusing a second instance.
 - **Reload tests:** an atomic swap on a valid change; old config kept and `/healthz` 503 on an invalid one; the daemon untouched.
-- **End-to-end test** (skipped with a note when `decree` is not on `PATH`): a temp project with one machine whose script records its `DECREE_DATA_*`. decree-api with the real decree and daemon receives a POST, and the test waits until the run is `done` and checks the recorded params.
+- **End-to-end test** (skipped with a note when `decree` is not on `PATH`): a temp project with one machine whose script records its `DECREE_DATA_*`. decree-go-rest with the real decree and daemon receives a POST, and the test waits until the run is `done` and checks the recorded params.
 - **The gate** runs `gofmt -l`, `go vet ./...` and `go test -race ./...`.
 
 ## 13. Differences from existential's decree-webhook
 
-| decree-webhook (decree 0.4) | decree-api (decree 0.5) | Why |
+| decree-webhook (decree 0.4) | decree-go-rest (decree 0.5) | Why |
 | --- | --- | --- |
 | Writes the inbox file itself: `routine:` plus free frontmatter keys | Runs `decree emit --machine … --param …` | 0.5 names `machine:`, and passes data as typed `params` validated against the machine's `data`. Free frontmatter keys no longer reach scripts. |
 | Filename `<routine>-<HHMMSS>.md`, `O_EXCL` and a discriminator for same-second collisions | decree's ids (`YYYYMMDDTHHMMSSZ-xxxxxx`), written atomically by `emit` | 0.5's ids are unique and its writer is atomic, so the collision workaround and the chain-number rule (`-0`, at most 100) are gone. |
 | Frontmatter built as a YAML node tree to block injection | Values passed as argv to `emit`; decree writes the YAML | The injection boundary is now decree's serializer, and there is no shell. |
 | `secret:` in the config file (rendered from a template) | `secret_env:` names an environment variable | The config can be committed; secrets live in the environment. |
 | Wrong method is a 404 (Express parity) | 405 with `Allow` | No legacy callers to keep compatible with. Both are charged to the failure budget. |
-| Exit on config change; the container restarts | Validated atomic swap; the old config is kept if the new one is invalid | decree-api also supervises the daemon, and restarting it would interrupt the running script. |
-| A separate container for the daemon | decree-api supervises `decree daemon` | One process to run. |
+| Exit on config change; the container restarts | Validated atomic swap; the old config is kept if the new one is invalid | decree-go-rest also supervises the daemon, and restarting it would interrupt the running script. |
+| A separate container for the daemon | decree-go-rest supervises `decree daemon` | One process to run. |
 | Inbox only | Plus `GET /runs/{id}`, `POST /runs/{wait_id}/replies/{event}`, `GET /openapi.json` | 0.5's `--format json` and `person` replies make status and approvals natural over HTTP. |
 | No tracing | `traceparent` passed through to the run | decree 0.5 runs are OpenTelemetry traces. |
 

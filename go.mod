@@ -1,4 +1,4 @@
-module github.com/jtmckay/decree-api
+module github.com/jtmckay/decree-go-rest
 
 go 1.22
 
