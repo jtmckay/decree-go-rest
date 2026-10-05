@@ -184,7 +184,7 @@ A config change never restarts the daemon, because that would interrupt the runn
 | --- | --- | --- |
 | `GET /healthz` | none | 200 `{"ok": true, "daemon": {"enabled", "running", "pid", "restarts", "since"}, "config": {"loaded_at", "error": null}}`. 503 with the same body when the daemon is enabled but not running, or the last config reload failed. Exempt from rate limits. |
 | `GET /runs/{id}` | default secret | `decree status <id> --format json` in the project: 200 with decree's document unchanged; 404 when decree exits 1 (an unknown id). `id` must match `[A-Za-z0-9._-]{1,128}`. |
-| `POST /runs/{wait_id}/replies/{event}` | default secret | `decree event <wait_id> <event> [-m <body>] --format json`: 201 with decree's `{id, path}`. 409 when decree exits 1 (the run is not waiting, or does not accept the event). The body is the optional note, under the same body cap. |
+| `POST /runs/{wait_id}/replies/{event}` | default secret | `decree event <wait_id> <event> [-m=<body>] --format json`: 201 with decree's `{id, path}`. The note goes as one argv entry, `-m=<body>`, so a note that starts with `-` is never read as an option; it is the body unchanged (no newline added), and an empty body passes no `-m`. 409 when decree exits 1 (the run is not waiting, or does not accept the event). The body is the optional note, under the same body cap. |
 | `GET /openapi.json` | none | An OpenAPI 3.1 document of every configured endpoint and enabled built-in: paths, path parameters with their patterns, the bearer scheme, request bodies as `text/plain`, and the responses above. Generated from the loaded config. |
 
 A configured endpoint may not use a path under `/runs/`, `/healthz` or `/openapi.json` while the matching built-in is enabled (a startup error).
