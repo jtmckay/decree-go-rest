@@ -1,0 +1,54 @@
+# decree-api as a systemd user unit (SPEC.md §11).
+#
+# Install:
+#   cp deploy/decree-api.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now decree-api
+#   loginctl enable-linger "$USER"     # keep running while logged out
+# Logs (JSON lines):
+#   journalctl --user -u decree-api -f
+#
+# Adjust the paths below (%h is your home directory) to your project.
+
+[Unit]
+Description=decree-api: HTTP front door of a decree project
+Documentation=https://github.com/jtmckay/decree-api
+# decree-api listens on a socket; wait for the network to be up.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# The project: the directory holding decree-api.yml and .decree/.
+WorkingDirectory=%h/decree-project
+ExecStart=%h/go/bin/decree-api -config %h/decree-project/decree-api.yml
+
+# Secrets live only in the environment, never in the config. The file
+# holds lines such as DECREE_API_SECRET=<openssl rand -hex 32>; keep it
+# mode 600. The file is required (no "-" prefix): without it the secrets
+# are missing and decree-api would refuse to start anyway.
+EnvironmentFile=%h/.config/decree-api/env
+
+# User units get a minimal PATH. decree-api runs decree from PATH (unless
+# the config's `decree:` is a path), and the daemon runs the project's
+# scripts, which need every tool they use.
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin
+
+# A failed start (an invalid config, a second instance) or a crash is
+# retried; a clean stop is not.
+Restart=on-failure
+RestartSec=5s
+
+# Shutdown order (SPEC.md §5): on SIGTERM decree-api stops accepting
+# requests and finishes in-flight ones (up to 10 s), then sends SIGTERM to
+# `decree daemon` and waits up to 15 s, so decree records the running script
+# as interrupted. KillMode=mixed sends SIGTERM to decree-api alone, not to
+# the daemon and its scripts at the same time, so that order holds.
+# TimeoutStopSec covers 10 s + 15 s with room to spare before systemd
+# sends SIGKILL to whatever is left.
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=40
+
+[Install]
+WantedBy=default.target

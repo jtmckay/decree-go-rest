@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -32,6 +33,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	configPath := fs.String("config", config.DefaultConfigPath, "the config file")
 	check := fs.Bool("check", false, "validate the config and exit")
 	healthcheck := fs.Bool("healthcheck", false, "request GET /healthz on the listen address; exit 0 on 200, 1 otherwise")
+	showVersion := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -43,6 +45,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch {
+	case *showVersion:
+		fmt.Fprintf(stdout, "decree-api %s\n", buildVersion())
+		return 0
 	case *check && *healthcheck:
 		fmt.Fprintln(stderr, "decree-api: -check and -healthcheck cannot be combined")
 		return 2
@@ -52,6 +57,50 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runHealthcheck(*configPath, stdout, stderr)
 	}
 	return runServe(*configPath, stderr)
+}
+
+// version is decree-api's version when set at link time, as in
+//
+//	go build -ldflags "-X main.version=v1.0.0" ./cmd/decree-api
+var version string
+
+// buildVersion is the linker's version if set, else the module version
+// that `go install …@version` records, else the VCS revision of a build
+// from a checkout, else "devel".
+func buildVersion() string {
+	if version != "" {
+		return version
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "devel"
+	}
+	return versionOf(info)
+}
+
+func versionOf(info *debug.BuildInfo) string {
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	var rev, modified string
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			modified = s.Value
+		}
+	}
+	if rev == "" {
+		return "devel"
+	}
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	if modified == "true" {
+		rev += "-dirty"
+	}
+	return "devel-" + rev
 }
 
 // runCheck is `decree-api -check`: SPEC.md §3, Validation.

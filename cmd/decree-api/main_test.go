@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -172,8 +173,12 @@ func TestCommandLine(t *testing.T) {
 	}
 }
 
+// schemaLine is the first line of decree-api.example.yml, which points
+// editors at decree-api.schema.json (SPEC.md §11).
+const schemaLine = "# yaml-language-server: $schema=decree-api.schema.json\n"
+
 // TestExampleMatchesSpec keeps decree-api.example.yml the example of
-// SPEC.md §3.
+// SPEC.md §3, below its $schema line.
 func TestExampleMatchesSpec(t *testing.T) {
 	spec, err := os.ReadFile("../../SPEC.md")
 	if err != nil {
@@ -190,7 +195,11 @@ func TestExampleMatchesSpec(t *testing.T) {
 	}
 	s = s[start+len("A full example:\n\n```yaml\n"):]
 	s = s[:strings.Index(s, "```")]
-	if s != string(example) {
+	rest, ok := strings.CutPrefix(string(example), schemaLine)
+	if !ok {
+		t.Errorf("decree-api.example.yml does not start with %q", schemaLine)
+	}
+	if s != rest {
 		t.Errorf("decree-api.example.yml differs from SPEC.md §3's example")
 	}
 }
@@ -233,6 +242,45 @@ endpoints:
 			if !strings.Contains(errOut, w) {
 				t.Errorf("%q: stderr lacks %q:\n%s", args, w, errOut)
 			}
+		}
+	}
+}
+
+// TestVersionFlag: -version prints decree-api's version and exits 0, the
+// linker's version first.
+func TestVersionFlag(t *testing.T) {
+	code, out, _ := runCLI("-version")
+	if code != 0 || !strings.HasPrefix(out, "decree-api ") || strings.TrimSpace(out) == "decree-api" {
+		t.Errorf("-version: exit %d, stdout %q", code, out)
+	}
+	old := version
+	version = "v1.2.3"
+	defer func() { version = old }()
+	if code, out, _ := runCLI("-version", "-check"); code != 0 || out != "decree-api v1.2.3\n" {
+		t.Errorf("-version with a linker version: exit %d, stdout %q", code, out)
+	}
+}
+
+func TestVersionOf(t *testing.T) {
+	info := func(v string, settings ...string) *debug.BuildInfo {
+		bi := &debug.BuildInfo{Main: debug.Module{Version: v}}
+		for i := 0; i+1 < len(settings); i += 2 {
+			bi.Settings = append(bi.Settings, debug.BuildSetting{Key: settings[i], Value: settings[i+1]})
+		}
+		return bi
+	}
+	for _, tc := range []struct {
+		info *debug.BuildInfo
+		want string
+	}{
+		{info("v0.6.0"), "v0.6.0"},
+		{info("(devel)"), "devel"},
+		{info(""), "devel"},
+		{info("(devel)", "vcs.revision", "85a8c1ae566f0123", "vcs.modified", "false"), "devel-85a8c1ae566f"},
+		{info("(devel)", "vcs.revision", "85a8c1a", "vcs.modified", "true"), "devel-85a8c1a-dirty"},
+	} {
+		if got := versionOf(tc.info); got != tc.want {
+			t.Errorf("versionOf(%v, %v) = %q, want %q", tc.info.Main.Version, tc.info.Settings, got, tc.want)
 		}
 	}
 }

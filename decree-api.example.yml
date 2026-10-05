@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=decree-api.schema.json
 project: .                          # the directory that holds .decree/ (relative to this file)
 listen: 127.0.0.1:8801              # keep it on localhost behind a reverse proxy
 secret_env: DECREE_API_SECRET       # the default bearer secret, read from this environment variable
