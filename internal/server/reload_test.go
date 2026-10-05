@@ -323,22 +323,19 @@ func TestReloadRace(t *testing.T) {
 	wg.Wait()
 }
 
-// TestReloadBuiltinSecrets: a built-in's changed secret_env takes effect
-// on reload, as an endpoint's does, and a reload whose built-in secret is
-// missing keeps the old table.
-func TestReloadBuiltinSecrets(t *testing.T) {
+// TestReloadEventSecret: an event endpoint's changed secret_env takes
+// effect on reload, and a reload whose secret is missing keeps the old
+// table.
+func TestReloadEventSecret(t *testing.T) {
 	f := newFixture(t, exampleConfig(t))
 	captureLogs(f.srv)
 	l := f.live(t)
-	statusSecret := strings.Repeat("s", 48)
-	newReplySecret := strings.Repeat("n", 33)
-	t.Setenv("STATUS_SECRET", statusSecret)
-	t.Setenv("NEW_REPLY_SECRET", newReplySecret)
+	newApproveSecret := strings.Repeat("n", 33)
+	t.Setenv("NEW_APPROVE_SECRET", newApproveSecret)
 
-	cfg := strings.Replace(exampleConfig(t), "status: { enabled: true }", "status: { enabled: true, secret_env: STATUS_SECRET }", 1)
-	cfg = strings.Replace(cfg, "secret_env: DECREE_GO_REST_REPLY_SECRET", "secret_env: NEW_REPLY_SECRET", 1)
+	cfg := strings.Replace(exampleConfig(t), "secret_env: DECREE_GO_REST_APPROVE_SECRET", "secret_env: NEW_APPROVE_SECRET", 1)
 	if cfg == exampleConfig(t) {
-		t.Fatal("the example config has no built-ins to change")
+		t.Fatal("the example config has no event secret to change")
 	}
 	write(t, f.path, cfg)
 	if err := l.Reload(); err != nil {
@@ -348,10 +345,8 @@ func TestReloadBuiltinSecrets(t *testing.T) {
 		r      req
 		status int
 	}{
-		{req{method: "GET", path: "/runs/r", bearer: secret}, 401},
-		{req{method: "GET", path: "/runs/r", bearer: statusSecret}, 200},
-		{req{path: "/runs/r/replies/approve", bearer: replySecret}, 401},
-		{req{path: "/runs/r/replies/approve", bearer: newReplySecret}, 201},
+		{req{path: "/approve/r", bearer: approveSecret}, 401},
+		{req{path: "/approve/r", bearer: newApproveSecret}, 201},
 		{req{path: "/notify/backup", bearer: secret, body: "x"}, 201},
 	} {
 		if got := liveDo(t, l, c.r); got != c.status {
@@ -359,14 +354,35 @@ func TestReloadBuiltinSecrets(t *testing.T) {
 		}
 	}
 
-	// A built-in secret that is not set fails the reload; the table that
-	// serves keeps the secrets it had.
-	write(t, f.path, strings.Replace(cfg, "secret_env: NEW_REPLY_SECRET", "secret_env: UNSET_REPLY_SECRET", 1))
+	// A secret that is not set fails the reload; the table that serves
+	// keeps the secrets it had.
+	write(t, f.path, strings.Replace(cfg, "secret_env: NEW_APPROVE_SECRET", "secret_env: UNSET_APPROVE_SECRET", 1))
 	err := l.Reload()
-	if err == nil || !strings.Contains(err.Error(), "UNSET_REPLY_SECRET is not set") {
-		t.Fatalf("reload with an unset built-in secret: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "UNSET_APPROVE_SECRET is not set") {
+		t.Fatalf("reload with an unset secret: %v", err)
 	}
-	if got := liveDo(t, l, req{path: "/runs/r/replies/approve", bearer: newReplySecret}); got != 201 {
+	if got := liveDo(t, l, req{path: "/approve/r", bearer: newApproveSecret}); got != 201 {
 		t.Errorf("reply after the failed reload: %d, want 201", got)
+	}
+}
+
+// TestReloadKeepsOpenAPISwitch: the environment's settings are read at
+// startup, so a reload keeps /openapi.json off, or on.
+func TestReloadKeepsOpenAPISwitch(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		f := newFixtureWith(t, exampleConfig(t), Options{OpenAPI: on})
+		captureLogs(f.srv)
+		l := f.live(t)
+		replaceFile(t, f.path, strings.Replace(exampleConfig(t), "  - path: /notify\n", extraEndpoint+"\n  - path: /notify\n", 1), time.Now().Add(time.Minute))
+		if err := l.Reload(); err != nil {
+			t.Fatal(err)
+		}
+		want := 404
+		if on {
+			want = 200
+		}
+		if got := liveDo(t, l, req{method: "GET", path: "/openapi.json"}); got != want {
+			t.Errorf("openapi %v after a reload: %d, want %d", on, got, want)
+		}
 	}
 }

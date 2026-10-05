@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -153,7 +154,13 @@ func TestLogsHoldNoSecretsBodiesOrParameters(t *testing.T) {
 }
 
 func TestLogRoutes(t *testing.T) {
-	f := newFixture(t, exampleConfig(t))
+	for _, on := range []bool{true, false} {
+		t.Run(fmt.Sprintf("openapi %v", on), func(t *testing.T) { testLogRoutes(t, on) })
+	}
+}
+
+func testLogRoutes(t *testing.T, openapi bool) {
+	f := newFixtureWith(t, exampleConfig(t), Options{OpenAPI: openapi})
 	logs := captureLogs(f.srv)
 	f.srv.LogRoutes()
 	var got []string
@@ -165,19 +172,24 @@ func TestLogRoutes(t *testing.T) {
 		if machine, ok := m["machine"].(string); ok {
 			line += " -> " + machine
 		}
-		if m["builtin"] == true {
-			line += " (built-in)"
+		if action, ok := m["action"].(string); ok {
+			line += " [" + action + "]"
+		}
+		if m["reserved"] == true {
+			line += " (reserved)"
 		}
 		got = append(got, line)
 	}
 	want := []string{
-		"POST /notify -> notify",
-		"POST /notify/{title} -> notify",
-		"POST /comfy/{type}/{name} -> comfy_image",
-		"GET /healthz (built-in)",
-		"GET /runs/{id} (built-in)",
-		"POST /runs/{wait_id}/replies/{event} (built-in)",
-		"GET /openapi.json (built-in)",
+		"POST /notify -> notify [emit]",
+		"POST /notify/{title} -> notify [emit]",
+		"POST /comfy/{type}/{name} -> comfy_image [emit]",
+		"POST /approve/{wait_id} [event]",
+		"GET /healthz (reserved)",
+		"GET /openapi.json (reserved)",
+	}
+	if !openapi {
+		want = want[:len(want)-1]
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("route records:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

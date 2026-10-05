@@ -139,6 +139,12 @@ func runServe(path string, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
+	// The environment's settings are read once, here.
+	openapi, err := config.OpenAPIEnabled()
+	if err != nil {
+		fmt.Fprintf(stderr, "decree-go-rest: %v\n", err)
+		return 1
+	}
 	c := loadValid(path, stderr)
 	if c == nil {
 		return 1
@@ -154,7 +160,7 @@ func runServe(path string, stderr io.Writer) int {
 	defer lock.Unlock()
 	// Logs are JSON lines on stderr (SPEC.md §9).
 	slog.SetDefault(slog.New(slog.NewJSONHandler(stderr, nil)))
-	srv, err := server.New(c)
+	srv, err := server.New(c, server.Options{OpenAPI: openapi})
 	if err != nil {
 		fmt.Fprintf(stderr, "decree-go-rest: %v\n", err)
 		return 1

@@ -153,7 +153,11 @@ func (v *validator) config() {
 	}
 }
 
-// paths is step 1, plus the built-in reservations of SPEC.md §7.
+// reservedRoutes are the routes served besides the endpoints. They are
+// reserved whether or not GET /openapi.json is switched on.
+var reservedRoutes = []string{"GET " + HealthPath, "GET " + OpenAPIPath}
+
+// paths is step 1, plus the reserved paths of SPEC.md §7.
 func (v *validator) paths() {
 	mux := http.NewServeMux()
 	seen := map[string]bool{}
@@ -162,16 +166,16 @@ func (v *validator) paths() {
 		if !v.pathShape(p) {
 			continue
 		}
-		if reserved := v.reserved(p); reserved != "" {
-			v.add(p, RulePath, "is under %s, which the enabled built-in uses", reserved)
+		if reserved := reservedPath(p); reserved != "" {
+			v.add(p, RulePath, "is under %s, which is reserved", reserved)
 		}
 		if seen[p] {
 			v.add(p, RulePath, "duplicate path")
 			continue
 		}
 		seen[p] = true
-		if err := v.builtinConflict(p); err != nil {
-			v.add(p, RulePath, "conflicts with a built-in endpoint: %v", err)
+		if err := reservedConflict(p); err != nil {
+			v.add(p, RulePath, "conflicts with a reserved path: %v", err)
 			continue
 		}
 		if err := register(mux, "POST "+p); err != nil {
@@ -180,13 +184,12 @@ func (v *validator) paths() {
 	}
 }
 
-// builtinConflict reports whether POST p conflicts, as a net/http
-// pattern, with an enabled built-in, which a path outside the built-ins'
-// prefixes can, such as /{a}/{b}/{c}/x with POST /runs/{wait_id}/replies/{event}.
-func (v *validator) builtinConflict(p string) error {
+// reservedConflict reports whether POST p conflicts, as a net/http
+// pattern, with a reserved route.
+func reservedConflict(p string) error {
 	mux := http.NewServeMux()
-	for _, rt := range v.c.BuiltinRoutes() {
-		if err := register(mux, rt.Method+" "+rt.Path); err != nil {
+	for _, rt := range reservedRoutes {
+		if err := register(mux, rt); err != nil {
 			return err
 		}
 	}
@@ -236,17 +239,12 @@ func (v *validator) pathShape(p string) bool {
 	return ok
 }
 
-// reserved returns the built-in prefix a path falls under, or "".
-func (v *validator) reserved(p string) string {
-	b := v.c.Builtins
-	under := func(prefix string) bool { return p == prefix || strings.HasPrefix(p, prefix+"/") }
-	switch {
-	case (b.Status.Enabled || b.Replies.Enabled) && strings.HasPrefix(p, "/runs/"):
-		return "/runs/"
-	case under(HealthPath):
-		return HealthPath
-	case b.OpenAPI.Enabled && under(OpenAPIPath):
-		return OpenAPIPath
+// reservedPath returns the reserved path p is, or falls under, or "".
+func reservedPath(p string) string {
+	for _, r := range []string{HealthPath, OpenAPIPath} {
+		if p == r || strings.HasPrefix(p, r+"/") {
+			return r
+		}
 	}
 	return ""
 }
@@ -263,7 +261,26 @@ func register(mux *http.ServeMux, pattern string) (err error) {
 	return nil
 }
 
-// endpoint runs steps 2–5 for one endpoint.
+// WaitIDPattern is the default pattern of a path parameter an event
+// endpoint uses in reply.to, since wait ids contain dots.
+const WaitIDPattern = `[A-Za-z0-9._-]{1,128}`
+
+// eventNameRE is decree's event-name pattern, which a literal reply.event
+// must match.
+var eventNameRE = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`)
+
+// placeholderUses reports whether s holds the placeholder {{name}}.
+func placeholderUses(s, name string) bool {
+	for _, m := range placeholderRE.FindAllStringSubmatch(s, -1) {
+		if m[1] == name {
+			return true
+		}
+	}
+	return false
+}
+
+// endpoint runs steps 2–5 for one endpoint: steps 4 and 5 apply to emit
+// endpoints only.
 func (v *validator) endpoint(e Endpoint) {
 	params := map[string]bool{}
 	for _, name := range PathParams(e.Path) {
@@ -278,6 +295,59 @@ func (v *validator) endpoint(e Endpoint) {
 		if _, err := regexp.Compile(`^(?:` + e.Patterns[name] + `)$`); err != nil {
 			v.add(e.Path, RulePatterns, "%q does not compile: %v", name, err)
 		}
+	}
+
+	switch e.Action {
+	case ActionEmit:
+		v.emitEndpoint(e, params)
+	case ActionEvent:
+		v.eventEndpoint(e, params)
+	default:
+		v.add(e.Path, RuleConfig, "action: %q is not emit or event", e.Action)
+	}
+}
+
+// eventEndpoint checks the shape of an event endpoint. Which runs are
+// waiting changes over time, so nothing else is checked at startup.
+func (v *validator) eventEndpoint(e Endpoint, params map[string]bool) {
+	if e.Message != nil {
+		v.add(e.Path, RuleConfig, "message is not allowed with action: event, which sends reply: { to, event }; an endpoint that queues a message is action: emit (the default)")
+	}
+	if e.Reply == nil {
+		v.add(e.Path, RuleConfig, "action: event requires reply: { to: '{{wait_id}}', event: <event> }")
+		return
+	}
+	used := map[string]bool{}
+	for _, f := range []struct{ key, value string }{{"reply.to", e.Reply.To}, {"reply.event", e.Reply.Event}} {
+		if f.value == "" {
+			v.add(e.Path, RuleConfig, "%s is required with action: event", f.key)
+			continue
+		}
+		for _, m := range placeholderRE.FindAllStringSubmatch(f.value, -1) {
+			if !params[m[1]] {
+				v.add(e.Path, RulePlaceholders, "%s: {{%s}} is not a parameter of the path", f.key, m[1])
+			}
+			used[m[1]] = true
+		}
+	}
+	if ev := e.Reply.Event; ev != "" && !placeholderRE.MatchString(ev) && !eventNameRE.MatchString(ev) {
+		v.add(e.Path, RuleConfig, "reply.event %q does not match decree's event-name pattern %s", ev, eventNameRE)
+	}
+	for _, name := range PathParams(e.Path) {
+		if !used[name] {
+			v.add(e.Path, RulePlaceholders, "parameter {%s} is not used in reply", name)
+		}
+	}
+}
+
+// emitEndpoint runs steps 3–5 for an emit endpoint.
+func (v *validator) emitEndpoint(e Endpoint, params map[string]bool) {
+	if e.Reply != nil {
+		v.add(e.Path, RuleConfig, "reply is not allowed with action: emit, which queues message: { machine, params }; an endpoint that replies to a waiting run is action: event")
+	}
+	if e.Message == nil {
+		v.add(e.Path, RuleMachine, "action: emit requires message: { machine, params }")
+		return
 	}
 
 	// Step 3: placeholders.
@@ -428,8 +498,8 @@ func kindName(n *yaml.Node) string {
 }
 
 // secrets is step 6: every referenced variable is set, non-blank and long
-// enough. The default secret is referenced by the endpoints and the
-// authenticated built-ins without their own.
+// enough. The default secret is referenced by the endpoints without their
+// own.
 func (v *validator) secrets() {
 	users := map[string][]string{}
 	var order []string
@@ -447,23 +517,6 @@ func (v *validator) secrets() {
 		}
 		use(env, e.Path)
 	}
-	for _, b := range []struct {
-		builtin Builtin
-		who     string
-	}{
-		{v.c.Builtins.Status, "GET " + StatusPath},
-		{v.c.Builtins.Replies, "POST " + RepliesPath},
-	} {
-		if !b.builtin.Enabled {
-			continue
-		}
-		env := b.builtin.EffectiveSecretEnv(v.c)
-		if env == "" {
-			v.add("", RuleSecrets, "%s: no secret_env, and the top-level secret_env is empty", b.who)
-			continue
-		}
-		use(env, b.who)
-	}
 	for _, env := range order {
 		val, set := os.LookupEnv(env)
 		var problem string
@@ -478,11 +531,7 @@ func (v *validator) secrets() {
 			continue
 		}
 		for _, who := range users[env] {
-			if strings.HasPrefix(who, "/") {
-				v.add(who, RuleSecrets, "%s %s", env, problem)
-			} else {
-				v.add("", RuleSecrets, "%s %s (used by %s)", env, problem, who)
-			}
+			v.add(who, RuleSecrets, "%s %s", env, problem)
 		}
 	}
 }

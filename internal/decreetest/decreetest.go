@@ -65,7 +65,7 @@ check)
 	if [ "$code" != 0 ]; then echo "error: decree check found errors" >&2; fi
 	exit "$code"
 	;;
-status|event)
+event)
 	record "$@"
 	answer "$cmd"
 	;;
@@ -127,7 +127,6 @@ func New(t testing.TB) *Stub {
 	s.SetEmit(t, 0, "")
 	s.write(t, "emit.json", "")
 	s.write(t, "emit.sleep", "")
-	s.SetStatus(t, 0, RunStatus, "")
 	s.SetEvent(t, 0, EventReply, "")
 	s.write(t, "daemon.term", "")
 	s.write(t, "daemon.ticks", "")
@@ -156,19 +155,6 @@ func (s *Stub) SetEmitSleep(t testing.TB, d string) {
 	s.write(t, "emit.sleep", d)
 }
 
-// RunStatus is `decree status <id> --format json` for a run waiting in a
-// person state, as decree 0.5 prints it; the stub prints it by default.
-const RunStatus = `{
-  "id": "20261005T043125Z-0a1b2c",
-  "machine": "review",
-  "status": "waiting",
-  "state": "approval",
-  "events": [
-    {"event":"claimed","exit_code":null,"from":null,"machine":"review","run_id":"20261005T043125Z-0a1b2c","seq":1,"source":"claim","to":"approval","trigger":"inbox","ts":"2026-10-05T04:31:26.000Z","type":"transition","v":1}
-  ]
-}
-`
-
 // EventReply is `decree event --format json` for a queued reply, as decree
 // 0.5 prints it; the stub prints it by default.
 const EventReply = `{
@@ -176,13 +162,6 @@ const EventReply = `{
   "path": ".decree/inbox/20261005T043200Z-3d4e5f.md"
 }
 `
-
-// SetStatus sets what `decree status` prints on stdout and stderr, and its
-// exit code. stdout is printed only on exit 0, stderr only otherwise.
-func (s *Stub) SetStatus(t testing.TB, exit int, stdout, stderr string) {
-	t.Helper()
-	s.setAnswer(t, "status", exit, stdout, stderr)
-}
 
 // SetEvent sets what `decree event` prints on stdout and stderr, and its
 // exit code. stdout is printed only on exit 0, stderr only otherwise.
@@ -199,14 +178,13 @@ func (s *Stub) setAnswer(t testing.TB, cmd string, exit int, stdout, stderr stri
 	s.SetSleep(t, cmd, "")
 }
 
-// SetSleep makes `decree status` or `decree event` (cmd) sleep before it
-// answers; d is an argument of sleep(1), such as "0.5" or "" for none.
+// SetSleep makes `decree <cmd>`, such as event, sleep before it answers; d is an argument of sleep(1), such as "0.5" or "" for none.
 func (s *Stub) SetSleep(t testing.TB, cmd, d string) {
 	t.Helper()
 	s.write(t, cmd+".sleep", d)
 }
 
-// Emit is one recorded `decree emit`, `decree status` or `decree event`.
+// Emit is one recorded `decree emit` or `decree event`.
 type Emit = Invocation
 
 // Invocation is one recorded call of a decree command.
@@ -242,8 +220,7 @@ func (s *Stub) Emits(t testing.TB) []Emit {
 	return s.Invocations(t, "emit")
 }
 
-// Invocations returns every recorded call of cmd ("emit", "status" or
-// "event"), in order.
+// Invocations returns every recorded call of cmd ("emit" or "event"), in order.
 func (s *Stub) Invocations(t testing.TB, cmd string) []Invocation {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(s.Dir, cmd+".calls"))

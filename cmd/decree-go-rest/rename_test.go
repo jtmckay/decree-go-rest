@@ -99,36 +99,36 @@ func TestAcceptanceBuiltBinaryChecksExample(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("decree-go-rest -check: %v\nstdout %q\nstderr %q", err, stdout.String(), stderr.String())
 	}
-	if got := stdout.String(); got != "config ok: 3 endpoints\n" {
-		t.Errorf("stdout %q, want \"config ok: 3 endpoints\\n\"", got)
+	if got := stdout.String(); got != "config ok: 4 endpoints\n" {
+		t.Errorf("stdout %q, want \"config ok: 4 endpoints\\n\"", got)
 	}
 	if calls := stub.Calls(t); len(calls) != 2 {
 		t.Errorf("decree calls = %q, want --version and check", calls)
 	}
 
-	// The reply endpoint's own secret is part of the check.
-	t.Setenv("DECREE_GO_REST_REPLY_SECRET", "too-short")
+	// The event endpoint's own secret is part of the check.
+	t.Setenv("DECREE_GO_REST_APPROVE_SECRET", "too-short")
 	cmd = exec.Command(bin, "-check", "-config", path)
 	stderr.Reset()
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err == nil {
 		t.Fatal("-check passed with a short reply secret")
 	}
-	if !strings.Contains(stderr.String(), "DECREE_GO_REST_REPLY_SECRET is 9 characters") {
-		t.Errorf("stderr %q, want the short reply secret named", stderr.String())
+	if !strings.Contains(stderr.String(), "DECREE_GO_REST_APPROVE_SECRET is 9 characters") {
+		t.Errorf("stderr %q, want the short approve secret named", stderr.String())
 	}
 }
 
-// TestServeRefusesMissingBuiltinSecret: a missing built-in secret is a
-// startup error; nothing serves.
-func TestServeRefusesMissingBuiltinSecret(t *testing.T) {
+// TestServeRefusesMissingEventSecret: an event endpoint's missing secret
+// is a startup error; nothing serves.
+func TestServeRefusesMissingEventSecret(t *testing.T) {
 	path, _ := exampleProject(t)
-	os.Unsetenv("DECREE_GO_REST_REPLY_SECRET")
+	os.Unsetenv("DECREE_GO_REST_APPROVE_SECRET")
 	code, _, errOut := runCLI("-config", path)
 	if code != 1 {
 		t.Fatalf("exit %d, want 1; stderr %q", code, errOut)
 	}
-	if !strings.Contains(errOut, "DECREE_GO_REST_REPLY_SECRET is not set (used by POST /runs/{wait_id}/replies/{event})") {
-		t.Errorf("stderr %q, want the missing reply secret named", errOut)
+	if !strings.Contains(errOut, "endpoint /approve/{wait_id}: secrets: DECREE_GO_REST_APPROVE_SECRET is not set") {
+		t.Errorf("stderr %q, want the missing approve secret named", errOut)
 	}
 }

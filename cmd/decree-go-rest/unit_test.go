@@ -56,4 +56,11 @@ func TestSystemdUnit(t *testing.T) {
 	if exec := strings.Join(got["[Service]ExecStart"], ""); !strings.Contains(exec, "decree-go-rest -config ") {
 		t.Errorf("ExecStart %q does not run decree-go-rest -config", exec)
 	}
+	raw, err := os.ReadFile("../../deploy/decree-go-rest.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "DECREE_GO_REST_OPENAPI=true") {
+		t.Error("the unit does not document DECREE_GO_REST_OPENAPI")
+	}
 }

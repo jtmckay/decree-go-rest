@@ -24,9 +24,14 @@ type endpoint struct {
 	secret []byte
 	params []pathParam
 	body   string
-	// machine and message are what it emits.
+	// action is config.ActionEmit or config.ActionEvent.
+	action string
+	// machine and message are what an emit endpoint queues.
 	machine string
 	message []messageParam
+	// to and event are what an event endpoint replies, each possibly
+	// holding placeholders.
+	to, event string
 }
 
 type pathParam struct {
@@ -47,22 +52,33 @@ func newEndpoint(c *config.Config, ce config.Endpoint) (*endpoint, error) {
 		return nil, fmt.Errorf("secret %s is not set or shorter than %d characters", env, config.MinSecretLen)
 	}
 	e := &endpoint{
-		route:   ce.Path,
-		secret:  []byte(secret),
-		body:    ce.Body,
-		machine: ce.Message.Machine,
+		route:  ce.Path,
+		secret: []byte(secret),
+		body:   ce.Body,
+		action: ce.Action,
 	}
 	for _, name := range config.PathParams(ce.Path) {
-		pat, ok := ce.Patterns[name]
-		if !ok {
-			pat = config.DefaultParamPattern
-		}
-		re, err := regexp.Compile(`^(?:` + pat + `)$`)
+		re, err := regexp.Compile(`^(?:` + ce.ParamPattern(name) + `)$`)
 		if err != nil {
 			return nil, fmt.Errorf("pattern of %s: %w", name, err)
 		}
 		e.params = append(e.params, pathParam{name: name, re: re})
 	}
+	switch ce.Action {
+	case config.ActionEvent:
+		if ce.Reply == nil {
+			return nil, errors.New("action: event without reply")
+		}
+		e.to, e.event = ce.Reply.To, ce.Reply.Event
+		return e, nil
+	case config.ActionEmit:
+		if ce.Message == nil {
+			return nil, errors.New("action: emit without message")
+		}
+	default:
+		return nil, fmt.Errorf("unknown action %q", ce.Action)
+	}
+	e.machine = ce.Message.Machine
 	for _, p := range ce.Message.Params {
 		text, template, err := config.ParamText(p.Value)
 		if err != nil {
@@ -99,7 +115,15 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *endpoi
 		writeError(w, status, msg)
 		return
 	}
+	if e.action == config.ActionEvent {
+		s.reply(w, r, e, values, body)
+		return
+	}
 
+	// The message body gets a trailing newline if it lacks one.
+	if len(body) > 0 && body[len(body)-1] != '\n' {
+		body = append(body, '\n')
+	}
 	args := []string{"emit", "--machine", e.machine}
 	for _, p := range e.message {
 		v := p.text
@@ -148,8 +172,9 @@ func (e *endpoint) pathValues(r *http.Request) (map[string]string, string) {
 	return values, ""
 }
 
-// readBody is SPEC.md §4 step 5. On failure it returns the status and
-// message of the response.
+// readBody is SPEC.md §4 step 5, but for the trailing newline a message
+// body gets: the body as sent, checked against the endpoint's rule. On
+// failure it returns the status and message of the response.
 func (s *Server) readBody(w http.ResponseWriter, r *http.Request, rule string) ([]byte, int, string) {
 	body, status, msg := s.readCapped(w, r)
 	if status != 0 {
@@ -164,9 +189,6 @@ func (s *Server) readBody(w http.ResponseWriter, r *http.Request, rule string) (
 		if len(body) > 0 {
 			return nil, http.StatusBadRequest, "this endpoint takes no body"
 		}
-	}
-	if len(body) > 0 && body[len(body)-1] != '\n' {
-		body = append(body, '\n')
 	}
 	return body, 0, ""
 }

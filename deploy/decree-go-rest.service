@@ -25,10 +25,17 @@ ExecStart=%h/go/bin/decree-go-rest -config %h/decree-project/decree-go-rest.yml
 
 # Secrets live only in the environment, never in the config. The file
 # holds lines such as DECREE_GO_REST_SECRET=<openssl rand -hex 32> and
-# DECREE_GO_REST_REPLY_SECRET=<another one>; keep it mode 600. The file
+# DECREE_GO_REST_APPROVE_SECRET=<another one>, for an approval endpoint
+# (action: event) with its own secret_env; keep it mode 600. The file
 # is required (no "-" prefix): without it the secrets are missing and
 # decree-go-rest would refuse to start anyway.
 EnvironmentFile=%h/.config/decree-go-rest/env
+
+# GET /openapi.json is off by default, since the document lists every
+# path. DECREE_GO_REST_OPENAPI=true serves it (no auth); false, or unset,
+# makes it a 404. Any other value stops decree-go-rest from starting. Set
+# it here or in the environment file above.
+#Environment=DECREE_GO_REST_OPENAPI=true
 
 # User units get a minimal PATH. decree-go-rest runs decree from PATH (unless
 # the config's `decree:` is a path), and the daemon runs the project's

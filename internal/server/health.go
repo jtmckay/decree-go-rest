@@ -7,7 +7,8 @@ import (
 	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
-// HealthRoute is the path of the health endpoint (SPEC.md §7).
+// HealthRoute is the path of the health endpoint (SPEC.md §7), served
+// whatever the config.
 const HealthRoute = config.HealthPath
 
 // DaemonState is the supervised daemon's state, as /healthz reports it.

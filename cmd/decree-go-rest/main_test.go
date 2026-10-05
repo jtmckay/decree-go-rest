@@ -65,7 +65,8 @@ func exampleProject(t *testing.T) (string, *decreetest.Stub) {
 	t.Setenv(config.ListenEnv, "")
 	t.Setenv("DECREE_GO_REST_SECRET", strings.Repeat("a", 64))
 	t.Setenv("COMFY_SECRET", strings.Repeat("b", 32))
-	t.Setenv("DECREE_GO_REST_REPLY_SECRET", strings.Repeat("c", 40))
+	t.Setenv("DECREE_GO_REST_APPROVE_SECRET", strings.Repeat("c", 40))
+	t.Setenv(config.OpenAPIEnv, "")
 	return path, stub
 }
 
@@ -78,8 +79,8 @@ func runCLI(args ...string) (code int, stdout, stderr string) {
 func TestCheckExampleOK(t *testing.T) {
 	path, stub := exampleProject(t)
 	code, out, errOut := runCLI("-check", "-config", path)
-	if code != 0 || out != "config ok: 3 endpoints\n" {
-		t.Fatalf("exit %d, stdout %q, stderr %q; want 0 and \"config ok: 3 endpoints\"", code, out, errOut)
+	if code != 0 || out != "config ok: 4 endpoints\n" {
+		t.Fatalf("exit %d, stdout %q, stderr %q; want 0 and \"config ok: 4 endpoints\"", code, out, errOut)
 	}
 	if calls := stub.Calls(t); len(calls) != 2 {
 		t.Errorf("decree calls = %q, want --version and check", calls)
@@ -96,7 +97,7 @@ func TestCheckDefaultConfigPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.Chdir(wd)
-	if code, out, errOut := runCLI("-check"); code != 0 || out != "config ok: 3 endpoints\n" {
+	if code, out, errOut := runCLI("-check"); code != 0 || out != "config ok: 4 endpoints\n" {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
 }
@@ -205,44 +206,109 @@ func TestExampleMatchesSpec(t *testing.T) {
 	}
 }
 
-// TestStartupRejectsPathUnderBuiltin: a configured path under an enabled
-// built-in's prefix is a startup error, for -check and for serving alike
-// (SPEC.md §7).
-func TestStartupRejectsPathUnderBuiltin(t *testing.T) {
+// TestStartupRejectsReservedPaths: a configured path that is, or is
+// under, /healthz or /openapi.json is a startup error, for -check and for
+// serving alike, whatever DECREE_GO_REST_OPENAPI says (SPEC.md §7).
+func TestStartupRejectsReservedPaths(t *testing.T) {
 	path, _ := exampleProject(t)
 	write(t, path, `project: .
 daemon: { enabled: false }
 endpoints:
-  - path: /runs/{title}
-    message: { machine: notify, params: { title: '{{title}}' } }
   - path: /openapi.json
     message: { machine: notify }
+  - path: /healthz
+    action: event
+    reply: { to: r, event: approve }
   - path: /healthz/x
     message: { machine: notify }
 `)
 	t.Setenv(config.ListenEnv, "127.0.0.1:0")
 	wants := []string{
-		"endpoint /runs/{title}: path: is under /runs/, which the enabled built-in uses",
-		"endpoint /openapi.json: path: is under /openapi.json, which the enabled built-in uses",
-		"endpoint /healthz/x: path: is under /healthz, which the enabled built-in uses",
+		"endpoint /openapi.json: path: is under /openapi.json, which is reserved",
+		"endpoint /healthz: path: is under /healthz, which is reserved",
+		"endpoint /healthz/x: path: is under /healthz, which is reserved",
 	}
-	for _, args := range [][]string{{"-check", "-config", path}, {"-config", path}} {
-		done := make(chan struct{})
-		var code int
-		var errOut string
-		go func() { defer close(done); code, _, errOut = runCLI(args...) }()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			t.Fatalf("%q: still running; it should refuse to start", args)
+	for _, openapi := range []string{"", "false", "true"} {
+		t.Setenv(config.OpenAPIEnv, openapi)
+		for _, args := range [][]string{{"-check", "-config", path}, {"-config", path}} {
+			code, errOut := runRefused(t, args...)
+			if code != 1 {
+				t.Errorf("%s=%q %q: exit %d, want 1", config.OpenAPIEnv, openapi, args, code)
+			}
+			for _, w := range wants {
+				if !strings.Contains(errOut, w) {
+					t.Errorf("%s=%q %q: stderr lacks %q:\n%s", config.OpenAPIEnv, openapi, args, w, errOut)
+				}
+			}
 		}
+	}
+}
+
+// runRefused runs the CLI, which must exit by itself, as it does when it
+// refuses to start, and returns its exit code and stderr.
+func runRefused(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	done := make(chan struct{})
+	var code int
+	var errOut string
+	go func() { defer close(done); code, _, errOut = runCLI(args...) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("%q: still running; it should refuse to start", args)
+	}
+	return code, errOut
+}
+
+// TestAcceptanceRemovedKey: a config with the old built-ins key fails to
+// start, and fails -check, naming the endpoint action form.
+func TestAcceptanceRemovedKey(t *testing.T) {
+	path, _ := exampleProject(t)
+	example, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, path, strings.Replace(string(example), "endpoints:\n", config.RemovedKey+":\n  replies: { enabled: true }\n\nendpoints:\n", 1))
+	t.Setenv(config.ListenEnv, "127.0.0.1:0")
+	for _, args := range [][]string{{"-check", "-config", path}, {"-config", path}} {
+		code, errOut := runRefused(t, args...)
 		if code != 1 {
 			t.Errorf("%q: exit %d, want 1", args, code)
 		}
-		for _, w := range wants {
+		for _, w := range []string{config.RemovedKey + " is no longer accepted", "`action: event`", config.OpenAPIEnv + "=true"} {
 			if !strings.Contains(errOut, w) {
 				t.Errorf("%q: stderr lacks %q:\n%s", args, w, errOut)
 			}
+		}
+	}
+}
+
+// TestCheckMixedActionKeys: an endpoint mixing message and reply fails
+// -check, naming the action form it needs.
+func TestCheckMixedActionKeys(t *testing.T) {
+	path, _ := exampleProject(t)
+	write(t, path, `project: .
+endpoints:
+  - path: /approve/{wait_id}
+    message: { machine: notify, params: { title: '{{wait_id}}' } }
+    reply: { to: '{{wait_id}}', event: approve }
+  - path: /reply/{wait_id}
+    action: event
+    message: { machine: notify }
+    reply: { to: '{{wait_id}}', event: approve }
+`)
+	code, errOut := runRefused(t, "-check", "-config", path)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	for _, w := range []string{
+		"endpoint /approve/{wait_id}: config: reply is not allowed with action: emit",
+		"is action: event",
+		"endpoint /reply/{wait_id}: config: message is not allowed with action: event",
+		"is action: emit (the default)",
+	} {
+		if !strings.Contains(errOut, w) {
+			t.Errorf("stderr lacks %q:\n%s", w, errOut)
 		}
 	}
 }

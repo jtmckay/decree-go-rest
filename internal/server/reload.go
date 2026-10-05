@@ -149,7 +149,7 @@ func (l *Live) Reload() error {
 	}
 
 	old := l.cur.Load()
-	next, err := newServer(serving, old.budgets)
+	next, err := newServer(serving, old.budgets, old.opts)
 	if err != nil {
 		return l.fail(err)
 	}

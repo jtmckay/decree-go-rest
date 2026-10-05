@@ -1,11 +1,125 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "description": "The HTTP front door of a decree project: each endpoint queues a decree message.",
+    "description": "The HTTP front door of a decree project: each endpoint queues a decree message, or replies to a run waiting for a person.",
     "title": "decree-go-rest",
     "version": "1"
   },
   "paths": {
+    "/approve/{wait_id}": {
+      "post": {
+        "description": "Runs `decree event {{wait_id}} approve [-m=<note>] --format json`, with the body as the note. Authenticated with its own bearer secret.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wait_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "pattern": "^(?:[A-Za-z0-9._-]{1,128})$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "The optional note, passed unchanged, of at most 262144 bytes.",
+          "required": false
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reply"
+                }
+              }
+            },
+            "description": "The reply is queued."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A parameter outside its pattern, a note that breaks the endpoint's body rule, or a note holding a NUL byte."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A missing or wrong bearer secret."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The run is not waiting, or does not accept the event."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A note larger than 262144 bytes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A rate budget is exhausted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the budget's window ends.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "decree could not queue the reply."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reply approve to a run waiting for a person"
+      }
+    },
     "/comfy/{type}/{name}": {
       "post": {
         "description": "Runs `decree emit --machine comfy_image`, with the body on stdin. Authenticated with its own bearer secret.",
@@ -361,220 +475,6 @@
         "security": [],
         "summary": "This document"
       }
-    },
-    "/runs/{id}": {
-      "get": {
-        "description": "Runs `decree status <id> --format json`. Authenticated with the default bearer secret.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "pattern": "^(?:[A-Za-z0-9._-]{1,128})$",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Run"
-                }
-              }
-            },
-            "description": "decree's document of the run, unchanged."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "The id is outside its pattern."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "A missing or wrong bearer secret."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "decree knows no such run."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "A rate budget is exhausted.",
-            "headers": {
-              "Retry-After": {
-                "description": "Seconds until the budget's window ends.",
-                "schema": {
-                  "type": "integer"
-                }
-              }
-            }
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "decree could not read the run."
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "A run's status"
-      }
-    },
-    "/runs/{wait_id}/replies/{event}": {
-      "post": {
-        "description": "Runs `decree event <wait_id> <event> [-m=<note>] --format json`. Authenticated with its own bearer secret.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "wait_id",
-            "required": true,
-            "schema": {
-              "pattern": "^(?:[A-Za-z0-9._-]{1,128})$",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "event",
-            "required": true,
-            "schema": {
-              "pattern": "^(?:[A-Za-z0-9._-]{1,128})$",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "text/plain": {
-              "schema": {
-                "type": "string"
-              }
-            }
-          },
-          "description": "The optional note, passed unchanged, of at most 262144 bytes.",
-          "required": false
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Reply"
-                }
-              }
-            },
-            "description": "The reply is queued."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "A parameter outside its pattern, or a note holding a NUL byte."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "A missing or wrong bearer secret."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "The run is not waiting, or does not accept the event."
-          },
-          "413": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "A note larger than 262144 bytes."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "A rate budget is exhausted.",
-            "headers": {
-              "Retry-After": {
-                "description": "Seconds until the budget's window ends.",
-                "schema": {
-                  "type": "integer"
-                }
-              }
-            }
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "decree could not queue the reply."
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "Reply to a run waiting for a person"
-      }
     }
   },
   "components": {
@@ -683,6 +583,10 @@
       "Reply": {
         "additionalProperties": false,
         "properties": {
+          "event": {
+            "description": "The event sent.",
+            "type": "string"
+          },
           "id": {
             "description": "The reply's message id.",
             "type": "string"
@@ -690,51 +594,17 @@
           "path": {
             "description": "The queued file, relative to the project: .decree/inbox/<id>.md.",
             "type": "string"
+          },
+          "to": {
+            "description": "The wait id of the run replied to.",
+            "type": "string"
           }
         },
         "required": [
           "id",
-          "path"
-        ],
-        "type": "object"
-      },
-      "Run": {
-        "description": "`decree status <id> --format json`, described by decree's .decree/schema/v1/cli/status.schema.json.",
-        "properties": {
-          "events": {
-            "items": {
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "id": {
-            "type": "string"
-          },
-          "machine": {
-            "type": "string"
-          },
-          "state": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "status": {
-            "enum": [
-              "active",
-              "waiting",
-              "pending",
-              "interrupted",
-              "finished"
-            ]
-          }
-        },
-        "required": [
-          "id",
-          "machine",
-          "status",
-          "state",
-          "events"
+          "path",
+          "to",
+          "event"
         ],
         "type": "object"
       }

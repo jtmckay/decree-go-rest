@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
 func waitFor(t *testing.T, what string, cond func() bool) {
@@ -112,5 +114,66 @@ func TestServeUntilSIGTERM(t *testing.T) {
 	}
 	if mode := st.Mode().Perm(); mode != 0o640 {
 		t.Errorf("a file decree creates has mode %#o, want 0640", mode)
+	}
+}
+
+// TestAcceptanceOpenAPIEnv: with DECREE_GO_REST_OPENAPI unset, false or
+// true, decree-go-rest starts and GET /openapi.json is a 404, a 404 or a
+// 200; with any other value it does not start.
+func TestAcceptanceOpenAPIEnv(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		value string // "-" unsets it
+		want  int    // 0: a startup error
+	}{
+		{"unset", "-", http.StatusNotFound},
+		{"false", "false", http.StatusNotFound},
+		{"true", "true", http.StatusOK},
+		{"maybe", "maybe", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			path, _ := exampleProject(t)
+			addr := freeAddr(t)
+			t.Setenv("DECREE_GO_REST_LISTEN", addr)
+			t.Setenv(config.OpenAPIEnv, c.value)
+			if c.value == "-" {
+				os.Unsetenv(config.OpenAPIEnv)
+			}
+			if c.want == 0 {
+				code, errOut := runRefused(t, "-config", path)
+				if code != 1 || !strings.Contains(errOut, config.OpenAPIEnv+` is "maybe"; it must be true or false`) {
+					t.Errorf("exit %d, stderr %q; want 1 naming %s", code, errOut, config.OpenAPIEnv)
+				}
+				return
+			}
+
+			exited := make(chan int, 1)
+			var stderr strings.Builder
+			go func() { exited <- run([]string{"-config", path}, &strings.Builder{}, &stderr) }()
+			var status int
+			waitFor(t, "decree-go-rest to listen", func() bool {
+				resp, err := http.Get("http://" + addr + "/openapi.json")
+				if err != nil {
+					return false
+				}
+				resp.Body.Close()
+				status = resp.StatusCode
+				return true
+			})
+			if status != c.want {
+				t.Errorf("GET /openapi.json: %d, want %d", status, c.want)
+			}
+			if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case code := <-exited:
+				if code != 0 {
+					t.Errorf("exit %d, want 0; stderr %q", code, stderr.String())
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("decree-go-rest did not exit after SIGTERM")
+			}
+		})
 	}
 }

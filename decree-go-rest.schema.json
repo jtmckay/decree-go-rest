@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree-go-rest/main/decree-go-rest.schema.json",
   "title": "decree-go-rest.yml",
-  "description": "The config of decree-go-rest, the HTTP front door of a decree 0.5 project (SPEC.md §3). Every key is optional except `endpoints`, each endpoint's `path` and `message.machine`, and a resolvable secret. This schema checks the shape; `decree-go-rest -check` checks the rest: that paths do not conflict, patterns compile, placeholders are path parameters, machines and their data exist, secrets are set, and decree runs.",
+  "description": "The config of decree-go-rest, the HTTP front door of a decree 0.5 project (SPEC.md §3). Every key is optional except `endpoints`, each endpoint's `path`, an emit endpoint's `message.machine`, an event endpoint's `reply.to` and `reply.event`, and a resolvable secret. This schema checks the shape; `decree-go-rest -check` checks the rest: that paths do not conflict, patterns compile, placeholders are path parameters, machines and their data exist, secrets are set, and decree runs. GET /openapi.json is switched by the environment variable DECREE_GO_REST_OPENAPI, not by this file.",
   "type": "object",
   "additionalProperties": false,
   "required": ["endpoints"],
@@ -77,37 +77,10 @@
         }
       }
     },
-    "builtins": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "The built-in endpoints (SPEC.md §7). GET /healthz is always served. A configured endpoint may not use a path an enabled built-in uses.",
-      "properties": {
-        "status": {
-          "$ref": "#/$defs/authBuiltin",
-          "description": "GET /runs/{id}: a run's `decree status`. Authenticated with its own `secret_env`, or the top-level one."
-        },
-        "replies": {
-          "$ref": "#/$defs/authBuiltin",
-          "description": "POST /runs/{wait_id}/replies/{event}: reply to a run waiting for a person, with `decree event`. Authenticated with its own `secret_env`, or the top-level one. Answering a run's question, such as an approval, deserves its own secret."
-        },
-        "openapi": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "GET /openapi.json: an OpenAPI 3.1 document of the endpoints, without auth (it reveals paths, not secrets), so it takes no `secret_env`.",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": true,
-              "description": "Serve GET /openapi.json."
-            }
-          }
-        }
-      }
-    },
     "endpoints": {
       "type": "array",
       "minItems": 1,
-      "description": "The endpoints: each turns an authenticated POST into a decree message, written by `decree emit`.",
+      "description": "The endpoints: each turns an authenticated POST into a decree message, written by `decree emit` (action: emit), or into a reply to a run waiting in a person state, sent by `decree event` (action: event).",
       "items": { "$ref": "#/$defs/endpoint" }
     }
   },
@@ -118,22 +91,6 @@
       "description": "decree's duration format: a positive whole number and s, m, h or d.",
       "examples": ["2s", "60s", "5m", "1d"]
     },
-    "authBuiltin": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "An authenticated built-in endpoint. A bare true or false is not accepted: write { enabled: true }.",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Serve this built-in."
-        },
-        "secret_env": {
-          "$ref": "#/$defs/envName",
-          "description": "The environment variable holding this built-in's own secret, at least 32 characters, instead of the top-level `secret_env`."
-        }
-      }
-    },
     "envName": {
       "type": "string",
       "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -142,14 +99,31 @@
     "endpoint": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "message"],
-      "description": "One endpoint: POST <path> emits a message for one machine.",
+      "required": ["path"],
+      "description": "One endpoint: POST <path> emits a message for one machine (action: emit, the default, with `message`), or replies to a run waiting in a person state (action: event, with `reply`).",
+      "if": {
+        "required": ["action"],
+        "properties": { "action": { "const": "event" } }
+      },
+      "then": {
+        "required": ["reply"],
+        "not": { "required": ["message"] }
+      },
+      "else": {
+        "required": ["message"],
+        "not": { "required": ["reply"] }
+      },
       "properties": {
         "path": {
           "type": "string",
           "pattern": "^/[A-Za-z0-9._\\-/{}]+$",
-          "description": "`/` followed by literal segments and `{name}` segments, one full segment per parameter (`\\w+`). No `..`, no empty segments, and no path under an enabled built-in. One trailing slash on a request is ignored.",
-          "examples": ["/notify", "/notify/{title}", "/comfy/{type}/{name}"]
+          "description": "`/` followed by literal segments and `{name}` segments, one full segment per parameter (`\\w+`). No `..`, no empty segments, and neither /healthz nor /openapi.json, nor a path under them: both are reserved. One trailing slash on a request is ignored.",
+          "examples": ["/notify", "/notify/{title}", "/comfy/{type}/{name}", "/approve/{wait_id}"]
+        },
+        "action": {
+          "enum": ["emit", "event"],
+          "default": "emit",
+          "description": "`emit` (the default) queues a new message with `decree emit`, and requires `message`. `event` replies to a run waiting in a person state with `decree event`, and requires `reply`. Neither takes the other's key."
         },
         "secret_env": {
           "$ref": "#/$defs/envName",
@@ -157,20 +131,19 @@
         },
         "patterns": {
           "type": "object",
-          "description": "A Go RE2 regular expression per path parameter, anchored automatically, replacing the default `[A-Za-z0-9_\\-!]+`. A parameter that does not fully match is a 400, never repaired.",
+          "description": "A Go RE2 regular expression per path parameter, anchored automatically, replacing the default: `[A-Za-z0-9._-]{1,128}` for a parameter an event endpoint uses in `reply.to` (wait ids contain dots), `[A-Za-z0-9_\\-!]+` for any other. A parameter that does not fully match is a 400, never repaired.",
           "propertyNames": { "pattern": "^\\w+$" },
           "additionalProperties": { "type": "string", "minLength": 1 }
         },
         "body": {
           "enum": ["required", "optional", "none"],
-          "default": "required",
-          "description": "`required`: a blank body is a 400. `optional`: an empty body is allowed. `none`: any body is a 400. The body reaches decree on stdin, as the message body."
+          "description": "`required` (the default for emit): a blank body is a 400. `optional` (the default for event): an empty body is allowed. `none`: any body is a 400. An emit endpoint's body reaches decree on stdin, as the message body; an event endpoint's is the note, passed unchanged as `-m=<body>`."
         },
         "message": {
           "type": "object",
           "additionalProperties": false,
           "required": ["machine"],
-          "description": "The message the endpoint emits.",
+          "description": "The message an emit endpoint queues. Not allowed with action: event.",
           "properties": {
             "machine": {
               "type": "string",
@@ -183,6 +156,29 @@
               "additionalProperties": {
                 "type": ["string", "integer", "boolean"]
               }
+            }
+          }
+        },
+        "reply": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["to", "event"],
+          "description": "The reply an event endpoint sends: `decree event <to> <event> [-m=<note>] --format json`, with the body as the note. Not allowed with action: emit. Every path parameter must be used in `to` or `event`.",
+          "properties": {
+            "to": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The wait id of the run waiting in a person state, usually a placeholder such as '{{wait_id}}'.",
+              "examples": ["{{wait_id}}"]
+            },
+            "event": {
+              "type": "string",
+              "anyOf": [
+                { "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$" },
+                { "pattern": "\\{\\{\\w+\\}\\}" }
+              ],
+              "description": "The event the run takes. A literal must match decree's event-name pattern `^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$`; it may instead hold a `{{name}}` placeholder.",
+              "examples": ["approve", "reject"]
             }
           }
         }

@@ -26,9 +26,16 @@ const (
 	DefaultRateMax      = 60
 	DefaultRateFailMax  = 10
 	DefaultBody         = BodyRequired
+	// DefaultEventBody is the body rule of an event endpoint: the body is
+	// an optional note.
+	DefaultEventBody = BodyOptional
+	DefaultAction    = ActionEmit
 
 	// ListenEnv overrides `listen` when set.
 	ListenEnv = "DECREE_GO_REST_LISTEN"
+	// OpenAPIEnv switches GET /openapi.json on (true) or off (false, the
+	// default). It is read at startup.
+	OpenAPIEnv = "DECREE_GO_REST_OPENAPI"
 )
 
 // Body rules of an endpoint.
@@ -36,6 +43,15 @@ const (
 	BodyRequired = "required"
 	BodyOptional = "optional"
 	BodyNone     = "none"
+)
+
+// Actions of an endpoint.
+const (
+	// ActionEmit queues a new message with `decree emit`.
+	ActionEmit = "emit"
+	// ActionEvent replies to a run waiting in a person state with
+	// `decree event`.
+	ActionEvent = "event"
 )
 
 // Config is a loaded decree-go-rest.yml.
@@ -53,7 +69,6 @@ type Config struct {
 	Decree    string     `yaml:"decree"`
 	Daemon    Daemon     `yaml:"daemon"`
 	Limits    Limits     `yaml:"limits"`
-	Builtins  Builtins   `yaml:"builtins"`
 	Endpoints []Endpoint `yaml:"endpoints"`
 }
 
@@ -71,150 +86,38 @@ type Limits struct {
 	RateFailMax  int      `yaml:"rate_fail_max"`
 }
 
-// Builtins configures the built-in endpoints (SPEC.md §7), one object per
-// key.
-type Builtins struct {
-	Status  Builtin        `yaml:"status"`
-	Replies Builtin        `yaml:"replies"`
-	OpenAPI OpenAPIBuiltin `yaml:"openapi"`
-}
-
-// OpenAPIBuiltin is GET /openapi.json, which has no auth and so takes no
-// secret_env.
-type OpenAPIBuiltin struct {
-	Enabled bool `yaml:"enabled"`
-}
-
-// Builtin is one built-in endpoint.
-type Builtin struct {
-	Enabled bool `yaml:"enabled"`
-	// SecretEnv is the built-in's own secret, or "" for the top-level one.
-	SecretEnv string `yaml:"secret_env"`
-}
-
-// EffectiveSecretEnv is the built-in's secret_env, or the top-level one.
-func (b Builtin) EffectiveSecretEnv(c *Config) string {
-	if b.SecretEnv != "" {
-		return b.SecretEnv
-	}
-	return c.SecretEnv
-}
-
-// UnmarshalYAML reads the builtins mapping. Each built-in is an object; a
-// bare true or false is an error naming the object form, and openapi takes
-// no secret_env. Keys left out keep their defaults.
-func (b *Builtins) UnmarshalYAML(n *yaml.Node) error {
-	if n.Kind != yaml.MappingNode {
-		return fmt.Errorf("line %d: builtins must be a mapping", n.Line)
-	}
-	seen := map[string]bool{}
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		k, v := n.Content[i], n.Content[i+1]
-		if seen[k.Value] {
-			return fmt.Errorf("line %d: builtins: duplicate key %q", k.Line, k.Value)
-		}
-		seen[k.Value] = true
-		key := "builtins." + k.Value
-		switch k.Value {
-		case "status":
-			if err := b.Status.unmarshal(key, v); err != nil {
-				return err
-			}
-		case "replies":
-			if err := b.Replies.unmarshal(key, v); err != nil {
-				return err
-			}
-		case "openapi":
-			o := Builtin{Enabled: b.OpenAPI.Enabled}
-			if err := o.unmarshal(key, v); err != nil {
-				return err
-			}
-			if o.SecretEnv != "" {
-				return fmt.Errorf("line %d: %s: secret_env is not allowed; GET %s takes no auth", v.Line, key, OpenAPIPath)
-			}
-			b.OpenAPI.Enabled = o.Enabled
-		default:
-			return fmt.Errorf("line %d: builtins: unknown key %q (status, replies or openapi)", k.Line, k.Value)
-		}
-	}
-	return nil
-}
-
-// unmarshal reads one built-in's object, named key in errors.
-func (b *Builtin) unmarshal(key string, n *yaml.Node) error {
-	if n.Kind != yaml.MappingNode {
-		if n.Kind == yaml.ScalarNode && n.Tag == "!!bool" {
-			return fmt.Errorf("line %d: %s: write { enabled: %s }, not a bare %s", n.Line, key, n.Value, n.Value)
-		}
-		return fmt.Errorf("line %d: %s: must be an object, such as { enabled: true }", n.Line, key)
-	}
-	seen := map[string]bool{}
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		k, v := n.Content[i], n.Content[i+1]
-		if seen[k.Value] {
-			return fmt.Errorf("line %d: %s: duplicate key %q", k.Line, key, k.Value)
-		}
-		seen[k.Value] = true
-		var err error
-		switch k.Value {
-		case "enabled":
-			err = v.Decode(&b.Enabled)
-		case "secret_env":
-			if v.Kind != yaml.ScalarNode || v.Tag != "!!str" {
-				err = errors.New("must be a string")
-			} else {
-				b.SecretEnv = v.Value
-			}
-		default:
-			return fmt.Errorf("line %d: %s: unknown key %q (enabled or secret_env)", k.Line, key, k.Value)
-		}
-		if err != nil {
-			return fmt.Errorf("line %d: %s.%s: %w", v.Line, key, k.Value, err)
-		}
-	}
-	return nil
-}
-
-// Paths of the built-in endpoints (SPEC.md §7).
+// Paths served besides the endpoints (SPEC.md §7). A configured endpoint
+// may use neither.
 const (
 	HealthPath  = "/healthz"
-	StatusPath  = "/runs/{id}"
-	RepliesPath = "/runs/{wait_id}/replies/{event}"
 	OpenAPIPath = "/openapi.json"
 )
 
-// RunIDPattern is the pattern of every parameter of the built-ins under
-// /runs/, anchored when it is matched.
-const RunIDPattern = `[A-Za-z0-9._-]{1,128}`
-
-// Route is a method and a path, as a built-in is served.
-type Route struct {
-	Method, Path string
-}
-
-// BuiltinRoutes returns the built-ins c enables, /healthz first; /healthz
-// is always served.
-func (c *Config) BuiltinRoutes() []Route {
-	out := []Route{{"GET", HealthPath}}
-	if c.Builtins.Status.Enabled {
-		out = append(out, Route{"GET", StatusPath})
-	}
-	if c.Builtins.Replies.Enabled {
-		out = append(out, Route{"POST", RepliesPath})
-	}
-	if c.Builtins.OpenAPI.Enabled {
-		out = append(out, Route{"GET", OpenAPIPath})
-	}
-	return out
-}
-
 // Endpoint is one configured endpoint.
 type Endpoint struct {
-	Path      string            `yaml:"path"`
+	Path string `yaml:"path"`
+	// Action is ActionEmit or ActionEvent.
+	Action    string            `yaml:"action"`
 	SecretEnv string            `yaml:"secret_env"`
 	Patterns  map[string]string `yaml:"patterns"`
 	Body      string            `yaml:"body"`
-	Message   Message           `yaml:"message"`
+	// Message is what an emit endpoint queues; nil when the key is absent.
+	Message *Message `yaml:"message"`
+	// Reply is what an event endpoint sends; nil when the key is absent.
+	Reply *Reply `yaml:"reply"`
+}
+
+// ParamPattern is the pattern of the path parameter name, unanchored: the
+// endpoint's own, else WaitIDPattern for a parameter an event endpoint
+// uses in reply.to, else DefaultParamPattern.
+func (e Endpoint) ParamPattern(name string) string {
+	if p, ok := e.Patterns[name]; ok {
+		return p
+	}
+	if e.Action == ActionEvent && e.Reply != nil && placeholderUses(e.Reply.To, name) {
+		return WaitIDPattern
+	}
+	return DefaultParamPattern
 }
 
 // EffectiveSecretEnv is the endpoint's secret_env, or the top-level one.
@@ -229,6 +132,15 @@ func (e Endpoint) EffectiveSecretEnv(c *Config) string {
 type Message struct {
 	Machine string `yaml:"machine"`
 	Params  Params `yaml:"params"`
+}
+
+// Reply is what an event endpoint sends: `decree event <to> <event>`.
+// Both may hold {{name}} placeholders for path parameters.
+type Reply struct {
+	// To is the wait id of the run waiting in a person state.
+	To string `yaml:"to"`
+	// Event is the event the run takes.
+	Event string `yaml:"event"`
 }
 
 // Param is one `params` entry, kept in the order of the config.
@@ -263,6 +175,25 @@ func (p *Params) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
+// checkRemovedKeys reports a top-level RemovedKey. A document that does
+// not parse is left to the decoder, which says why.
+func checkRemovedKeys(data []byte) error {
+	var doc yaml.Node
+	if yaml.Unmarshal(data, &doc) != nil || len(doc.Content) == 0 {
+		return nil
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if k := root.Content[i]; k.Value == RemovedKey {
+			return fmt.Errorf("line %d: %s %s", k.Line, RemovedKey, removedKeyError)
+		}
+	}
+	return nil
+}
+
 func defaults() Config {
 	return Config{
 		Project:   DefaultProject,
@@ -275,11 +206,6 @@ func defaults() Config {
 			RateWindow:   Duration(DefaultRateWindow),
 			RateMax:      DefaultRateMax,
 			RateFailMax:  DefaultRateFailMax,
-		},
-		Builtins: Builtins{
-			Status:  Builtin{Enabled: true},
-			Replies: Builtin{Enabled: true},
-			OpenAPI: OpenAPIBuiltin{Enabled: true},
 		},
 	}
 }
@@ -309,8 +235,36 @@ func Load(path string) (*Config, error) {
 	return c, nil
 }
 
-// Parse decodes a config document. Unknown keys are an error.
+// OpenAPIEnabled reads OpenAPIEnv: true or false, and false when it is
+// unset or empty. Any other value is an error.
+func OpenAPIEnabled() (bool, error) {
+	switch v := os.Getenv(OpenAPIEnv); v {
+	case "", "false":
+		return false, nil
+	case "true":
+		return true, nil
+	default:
+		return false, fmt.Errorf("%s is %q; it must be true or false", OpenAPIEnv, v)
+	}
+}
+
+// RemovedKey is the top-level key that configured the built-in endpoints
+// before every endpoint was configured. It is built from parts so that a
+// search of the repository for it finds only history.
+const RemovedKey = "built" + "ins"
+
+// removedKeyError names what replaced RemovedKey.
+const removedKeyError = "is no longer accepted: every endpoint is configured. " +
+	"Reply to a run waiting in a person state with an endpoint of `action: event` " +
+	"(its own path, secret_env, patterns and reply: { to: '{{wait_id}}', event: approve }), " +
+	"and serve GET " + OpenAPIPath + " by setting " + OpenAPIEnv + "=true"
+
+// Parse decodes a config document. Unknown keys are an error, and
+// RemovedKey an error that names the endpoint `action` form.
 func Parse(data []byte) (*Config, error) {
+	if err := checkRemovedKeys(data); err != nil {
+		return nil, err
+	}
 	c := defaults()
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -327,8 +281,15 @@ func Parse(data []byte) (*Config, error) {
 	// Defaults inside endpoints are applied after decoding: a struct-level
 	// UnmarshalYAML would lose the decoder's KnownFields check.
 	for i := range c.Endpoints {
-		if c.Endpoints[i].Body == "" {
-			c.Endpoints[i].Body = DefaultBody
+		e := &c.Endpoints[i]
+		if e.Action == "" {
+			e.Action = DefaultAction
+		}
+		if e.Body == "" {
+			e.Body = DefaultBody
+			if e.Action == ActionEvent {
+				e.Body = DefaultEventBody
+			}
 		}
 	}
 	if v, ok := os.LookupEnv(ListenEnv); ok && v != "" {

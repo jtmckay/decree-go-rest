@@ -28,7 +28,8 @@ func TestMain(m *testing.M) {
 var (
 	secret      = strings.Repeat("a", 64)
 	comfySecret = strings.Repeat("b", 32)
-	replySecret = strings.Repeat("c", 40)
+	// approveSecret is the own secret of the example's event endpoint.
+	approveSecret = strings.Repeat("d", 48)
 )
 
 const (
@@ -95,8 +96,15 @@ func exampleConfig(t *testing.T) string {
 }
 
 // newFixture validates cfg in a temp project holding the test machines,
-// as decree-go-rest does at startup, and builds its Server.
+// as decree-go-rest does at startup, and builds its Server, with GET
+// /openapi.json on.
 func newFixture(t *testing.T, cfg string) *fixture {
+	t.Helper()
+	return newFixtureWith(t, cfg, Options{OpenAPI: true})
+}
+
+// newFixtureWith is newFixture with the Server built with opts.
+func newFixtureWith(t *testing.T, cfg string, opts Options) *fixture {
 	t.Helper()
 	proj := t.TempDir()
 	write(t, config.MachineFile(proj, "notify"), notifyMachine)
@@ -109,7 +117,7 @@ func newFixture(t *testing.T, cfg string) *fixture {
 	t.Setenv(config.ListenEnv, "")
 	t.Setenv("DECREE_GO_REST_SECRET", secret)
 	t.Setenv("COMFY_SECRET", comfySecret)
-	t.Setenv("DECREE_GO_REST_REPLY_SECRET", replySecret)
+	t.Setenv("DECREE_GO_REST_APPROVE_SECRET", approveSecret)
 	c, err := config.Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +125,7 @@ func newFixture(t *testing.T, cfg string) *fixture {
 	if errs := config.Validate(c, config.Options{}); errs != nil {
 		t.Fatalf("config invalid:\n%v", errs)
 	}
-	srv, err := New(c)
+	srv, err := New(c, opts)
 	if err != nil {
 		t.Fatal(err)
 	}

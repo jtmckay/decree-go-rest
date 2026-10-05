@@ -32,14 +32,12 @@ type Server struct {
 	projectDir string
 	// maxBody is limits.max_body_bytes.
 	maxBody int64
-	// statusSecret and replySecret are the secrets of GET /runs/{id} and
-	// POST /runs/{wait_id}/replies/{event}: each its own, or the default
-	// one; nil when that built-in is disabled.
-	statusSecret, replySecret []byte
-	// openapi is the document GET /openapi.json serves.
+	// opts are what the environment set at startup; a reload keeps them.
+	opts Options
+	// openapi is the document GET /openapi.json serves, when it is on.
 	openapi []byte
-	// builtins are the built-in routes served, /healthz first.
-	builtins []config.Route
+	// reserved are the paths served besides the endpoints, /healthz first.
+	reserved []string
 	// EmitTimeout bounds each `decree emit` (SPEC.md §4 step 6).
 	EmitTimeout time.Duration
 	// Environ returns the service's environment; os.Environ by default.
@@ -54,15 +52,21 @@ type Server struct {
 	health func() health
 }
 
+// Options are the settings of the environment, read once at startup.
+type Options struct {
+	// OpenAPI serves GET /openapi.json: config.OpenAPIEnv.
+	OpenAPI bool
+}
+
 // New builds the route table of a validated config. Secrets are read from
 // the environment now.
-func New(c *config.Config) (*Server, error) {
-	return newServer(c, newBudgets(c.Limits))
+func New(c *config.Config, opts Options) (*Server, error) {
+	return newServer(c, newBudgets(c.Limits), opts)
 }
 
 // newServer is New with the rate budgets given, so that a reload keeps
 // what the old config's requests spent.
-func newServer(c *config.Config, b *budgets) (*Server, error) {
+func newServer(c *config.Config, b *budgets, opts Options) (*Server, error) {
 	bin, err := resolveDecree(c)
 	if err != nil {
 		return nil, err
@@ -76,6 +80,7 @@ func newServer(c *config.Config, b *budgets) (*Server, error) {
 		Environ:     os.Environ,
 		Logger:      slog.Default(),
 		budgets:     b,
+		opts:        opts,
 	}
 	for _, ce := range c.Endpoints {
 		e, err := newEndpoint(c, ce)
@@ -90,7 +95,7 @@ func newServer(c *config.Config, b *budgets) (*Server, error) {
 			return nil, fmt.Errorf("endpoint %s: %w", ce.Path, err)
 		}
 	}
-	if err := s.handleBuiltins(c); err != nil {
+	if err := s.handleReserved(c); err != nil {
 		return nil, err
 	}
 	if err := handle(s.mux, "/", s.notFound); err != nil {
@@ -180,51 +185,27 @@ func (s *Server) allowed(r *http.Request) (route, allow string) {
 	return route, strings.Join(methods, ", ")
 }
 
-// handleBuiltins registers /healthz and the built-ins c enables (SPEC.md
-// §7).
-func (s *Server) handleBuiltins(c *config.Config) error {
-	var err error
-	if c.Builtins.Status.Enabled {
-		if s.statusSecret, err = builtinSecret(c, c.Builtins.Status); err != nil {
-			return fmt.Errorf("built-in %s: %w", config.StatusPath, err)
-		}
+// handleReserved registers GET /healthz, always, and GET /openapi.json
+// when it is on (SPEC.md §7). Off, /openapi.json is a 404 like any
+// unknown path.
+func (s *Server) handleReserved(c *config.Config) error {
+	if err := handle(s.mux, http.MethodGet+" "+config.HealthPath, s.serveHealth); err != nil {
+		return fmt.Errorf("%s: %w", config.HealthPath, err)
 	}
-	if c.Builtins.Replies.Enabled {
-		if s.replySecret, err = builtinSecret(c, c.Builtins.Replies); err != nil {
-			return fmt.Errorf("built-in %s: %w", config.RepliesPath, err)
-		}
+	s.reserved = []string{config.HealthPath}
+	if !s.opts.OpenAPI {
+		return nil
 	}
-	if c.Builtins.OpenAPI.Enabled {
-		doc, err := openAPI(c)
-		if err != nil {
-			return err
-		}
-		s.openapi = doc
+	doc, err := openAPI(c)
+	if err != nil {
+		return err
 	}
-	handlers := map[string]http.HandlerFunc{
-		config.HealthPath:  s.serveHealth,
-		config.StatusPath:  s.serveStatus,
-		config.RepliesPath: s.serveReply,
-		config.OpenAPIPath: s.serveOpenAPI,
+	s.openapi = doc
+	if err := handle(s.mux, http.MethodGet+" "+config.OpenAPIPath, s.serveOpenAPI); err != nil {
+		return fmt.Errorf("%s: %w", config.OpenAPIPath, err)
 	}
-	s.builtins = c.BuiltinRoutes()
-	for _, rt := range s.builtins {
-		if err := handle(s.mux, rt.Method+" "+rt.Path, handlers[rt.Path]); err != nil {
-			return fmt.Errorf("built-in %s: %w", rt.Path, err)
-		}
-	}
+	s.reserved = append(s.reserved, config.OpenAPIPath)
 	return nil
-}
-
-// builtinSecret reads the secret of an authenticated built-in from the
-// environment: its own secret_env, or the top-level one.
-func builtinSecret(c *config.Config, b config.Builtin) ([]byte, error) {
-	env := b.EffectiveSecretEnv(c)
-	secret := os.Getenv(env)
-	if len(secret) < config.MinSecretLen {
-		return nil, fmt.Errorf("secret %s is not set or shorter than %d characters", env, config.MinSecretLen)
-	}
-	return []byte(secret), nil
 }
 
 // methodNotAllowed answers a known route with the wrong method: a 405

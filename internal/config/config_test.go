@@ -42,13 +42,9 @@ func TestLoadDefaults(t *testing.T) {
 		{"limits.rate_window", c.Limits.RateWindow.Std(), 60 * time.Second},
 		{"limits.rate_max", c.Limits.RateMax, 60},
 		{"limits.rate_fail_max", c.Limits.RateFailMax, 10},
-		{"builtins.status.enabled", c.Builtins.Status.Enabled, true},
-		{"builtins.status effective secret_env", c.Builtins.Status.EffectiveSecretEnv(c), "DECREE_GO_REST_SECRET"},
-		{"builtins.replies.enabled", c.Builtins.Replies.Enabled, true},
-		{"builtins.replies effective secret_env", c.Builtins.Replies.EffectiveSecretEnv(c), "DECREE_GO_REST_SECRET"},
-		{"builtins.openapi.enabled", c.Builtins.OpenAPI.Enabled, true},
 		{"endpoints[0].secret_env", c.Endpoints[0].SecretEnv, ""},
 		{"endpoints[0] effective secret_env", c.Endpoints[0].EffectiveSecretEnv(c), "DECREE_GO_REST_SECRET"},
+		{"endpoints[0].action", c.Endpoints[0].Action, "emit"},
 		{"endpoints[0].body", c.Endpoints[0].Body, "required"},
 		{"endpoints[0].patterns", len(c.Endpoints[0].Patterns), 0},
 		{"endpoints[0].message.params", len(c.Endpoints[0].Message.Params), 0},
@@ -70,7 +66,6 @@ secret_env: MY_SECRET
 decree: /opt/decree
 daemon: { enabled: false, interval: 1m }
 limits: { max_body_bytes: 10, rate_window: 1h, rate_max: 5, rate_fail_max: 2 }
-builtins: { status: { enabled: false }, replies: { enabled: false }, openapi: { enabled: false } }
 endpoints:
   - path: /a/{x}
     secret_env: OTHER
@@ -96,9 +91,6 @@ endpoints:
 	if c.Limits != (Limits{10, Duration(time.Hour), 5, 2}) {
 		t.Errorf("limits = %+v", c.Limits)
 	}
-	if c.Builtins != (Builtins{}) {
-		t.Errorf("builtins = %+v", c.Builtins)
-	}
 	e := c.Endpoints[0]
 	if e.Path != "/a/{x}" || e.SecretEnv != "OTHER" || e.Patterns["x"] != "[a-z]+" || e.Body != "none" || e.Message.Machine != "m" {
 		t.Errorf("endpoint = %+v", e)
@@ -109,6 +101,50 @@ endpoints:
 	}
 	if got := strings.Join(keys, ","); got != "z,a,m" {
 		t.Errorf("params order = %s, want z,a,m (config order)", got)
+	}
+}
+
+// TestEventEndpointDefaults: an event endpoint's body defaults to
+// optional, and a parameter it uses in reply.to defaults to the wait-id
+// pattern, since wait ids contain dots.
+func TestEventEndpointDefaults(t *testing.T) {
+	c, err := Parse([]byte(`endpoints:
+  - path: /approve/{wait_id}/{ev}/{x}
+    action: event
+    patterns: { x: '[a-z]' }
+    reply: { to: '{{wait_id}}', event: '{{ev}}{{x}}' }
+  - path: /strict/{w}
+    action: event
+    body: required
+    reply: { to: 'r.{{w}}', event: approve }
+  - path: /emit/{w}
+    message: { machine: m, params: { t: '{{w}}' } }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev, strict, emit := c.Endpoints[0], c.Endpoints[1], c.Endpoints[2]
+	checks := []struct {
+		name      string
+		got, want any
+	}{
+		{"event action", ev.Action, ActionEvent},
+		{"event body", ev.Body, BodyOptional},
+		{"event reply.to", ev.Reply.To, "{{wait_id}}"},
+		{"event message", ev.Message == nil, true},
+		{"pattern of a parameter in to", ev.ParamPattern("wait_id"), WaitIDPattern},
+		{"pattern of a parameter in event", ev.ParamPattern("ev"), DefaultParamPattern},
+		{"configured pattern", ev.ParamPattern("x"), "[a-z]"},
+		{"explicit body", strict.Body, BodyRequired},
+		{"pattern of a parameter inside to", strict.ParamPattern("w"), WaitIDPattern},
+		{"emit body", emit.Body, BodyRequired},
+		{"emit pattern", emit.ParamPattern("w"), DefaultParamPattern},
+		{"emit reply", emit.Reply == nil, true},
+	}
+	for _, ch := range checks {
+		if ch.got != ch.want {
+			t.Errorf("%s = %v, want %v", ch.name, ch.got, ch.want)
+		}
 	}
 }
 
@@ -129,6 +165,8 @@ func TestParseErrors(t *testing.T) {
 		"unknown nested key":    "daemon: { enable: true }\nendpoints: []\n",
 		"unknown endpoint key":  "endpoints:\n  - path: /a\n    methods: [GET]\n    message: { machine: m }\n",
 		"unknown message key":   "endpoints:\n  - path: /a\n    message: { machine: m, routine: x }\n",
+		"unknown reply key":     "endpoints:\n  - path: /a\n    action: event\n    reply: { to: r, event: e, note: x }\n",
+		"reply not a mapping":   "endpoints:\n  - path: /a\n    action: event\n    reply: approve\n",
 		"bad duration":          "daemon: { interval: 2 }\nendpoints: []\n",
 		"go duration":           "limits: { rate_window: 1m30s }\nendpoints: []\n",
 		"duplicate param":       "endpoints:\n  - path: /a\n    message: { machine: m, params: { a: 1, a: 2 } }\n",
@@ -185,66 +223,28 @@ func TestDurationString(t *testing.T) {
 	}
 }
 
-// TestBuiltinObjects: each built-in is an object whose enabled defaults to
-// true and whose secret_env defaults to the top-level one.
-func TestBuiltinObjects(t *testing.T) {
-	c, err := Parse([]byte(`secret_env: TOP
-builtins:
-  status: { secret_env: STATUS_SECRET }
-  replies: { enabled: false }
-  openapi: {}
-endpoints: []
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	checks := []struct {
-		name      string
-		got, want any
-	}{
-		{"status.enabled", c.Builtins.Status.Enabled, true},
-		{"status effective secret_env", c.Builtins.Status.EffectiveSecretEnv(c), "STATUS_SECRET"},
-		{"replies.enabled", c.Builtins.Replies.Enabled, false},
-		{"replies effective secret_env", c.Builtins.Replies.EffectiveSecretEnv(c), "TOP"},
-		{"openapi.enabled", c.Builtins.OpenAPI.Enabled, true},
-	}
-	for _, ch := range checks {
-		if ch.got != ch.want {
-			t.Errorf("%s = %v, want %v", ch.name, ch.got, ch.want)
-		}
-	}
-	var routes []string
-	for _, rt := range c.BuiltinRoutes() {
-		routes = append(routes, rt.Method+" "+rt.Path)
-	}
-	if got := strings.Join(routes, ", "); got != "GET /healthz, GET /runs/{id}, GET /openapi.json" {
-		t.Errorf("built-in routes %s", got)
-	}
-}
-
-// TestBuiltinConfigErrors: a bare true or false names the object form,
-// and openapi takes no secret_env.
-func TestBuiltinConfigErrors(t *testing.T) {
-	cases := map[string]struct{ doc, want string }{
-		"bare true":          {"builtins: { replies: true }\nendpoints: []\n", "builtins.replies: write { enabled: true }"},
-		"bare false":         {"builtins:\n  status: false\nendpoints: []\n", "line 2: builtins.status: write { enabled: false }"},
-		"bare openapi":       {"builtins: { openapi: true }\nendpoints: []\n", "builtins.openapi: write { enabled: true }"},
-		"string":             {"builtins: { replies: yes }\nendpoints: []\n", "builtins.replies: must be an object, such as { enabled: true }"},
-		"openapi secret_env": {"builtins: { openapi: { secret_env: OPENAPI_SECRET } }\nendpoints: []\n", "builtins.openapi: secret_env is not allowed"},
-		"unknown built-in":   {"builtins: { events: { enabled: true } }\nendpoints: []\n", `builtins: unknown key "events"`},
-		"unknown key":        {"builtins: { replies: { secret: x } }\nendpoints: []\n", `builtins.replies: unknown key "secret"`},
-		"duplicate key":      {"builtins: { replies: { enabled: true, enabled: false } }\nendpoints: []\n", `duplicate key "enabled"`},
-		"duplicate built-in": {"builtins:\n  replies: {}\n  replies: {}\nendpoints: []\n", `duplicate key "replies"`},
-		"enabled not a bool": {"builtins: { status: { enabled: sure } }\nendpoints: []\n", "builtins.status.enabled"},
-		"secret_env a list":  {"builtins: { status: { secret_env: [A] } }\nendpoints: []\n", "builtins.status.secret_env: must be a string"},
-		"not a mapping":      {"builtins: [status]\nendpoints: []\n", "builtins must be a mapping"},
-	}
-	for name, tc := range cases {
+// TestRemovedKey: the key of the old built-ins is an error naming the
+// endpoint action form and the OpenAPI variable, in any form it takes.
+func TestRemovedKey(t *testing.T) {
+	for name, doc := range map[string]string{
+		"objects":  RemovedKey + ":\n  replies: { enabled: true }\nendpoints: []\n",
+		"empty":    "endpoints: []\n" + RemovedKey + ": {}\n",
+		"a scalar": RemovedKey + ": false\nendpoints: []\n",
+	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := Parse([]byte(tc.doc))
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("Parse error %v, want one containing %q", err, tc.want)
+			_, err := Parse([]byte(doc))
+			if err == nil {
+				t.Fatal("Parse succeeded")
+			}
+			for _, want := range []string{RemovedKey + " is no longer accepted", "action: event", "reply: { to:", OpenAPIEnv + "=true"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not hold %q", err, want)
+				}
 			}
 		})
+	}
+	// Nested, it is an ordinary unknown key.
+	if _, err := Parse([]byte("daemon: { " + RemovedKey + ": {} }\nendpoints: []\n")); err == nil || strings.Contains(err.Error(), "no longer accepted") {
+		t.Errorf("nested: %v", err)
 	}
 }

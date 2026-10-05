@@ -18,9 +18,9 @@ const OpenAPIVersion = "3.1.0"
 type obj = map[string]any
 
 // openAPI is the OpenAPI 3.1 document of c (SPEC.md §7): every configured
-// endpoint and enabled built-in, with its path parameters and their
-// patterns, the bearer scheme, request bodies as text/plain, and the
-// responses of SPEC.md §4 and §7.
+// endpoint, described by its action, with its path parameters and their
+// patterns, the bearer scheme, request bodies as text/plain and the
+// responses of SPEC.md §4; then /healthz and /openapi.json.
 func openAPI(c *config.Config) ([]byte, error) {
 	paths := obj{}
 	add := func(path, method string, op obj) {
@@ -35,101 +35,42 @@ func openAPI(c *config.Config) ([]byte, error) {
 	for _, e := range c.Endpoints {
 		var params []any
 		for _, name := range config.PathParams(e.Path) {
-			pat, ok := e.Patterns[name]
-			if !ok {
-				pat = config.DefaultParamPattern
-			}
-			params = append(params, pathParameter(name, pat, MaxParamBytes))
+			params = append(params, pathParameter(name, e.ParamPattern(name), MaxParamBytes))
 		}
-		secret := secretName(c, e.SecretEnv)
-		op := obj{
-			"summary":     "Queue a message for machine " + e.Message.Machine,
-			"description": fmt.Sprintf("Runs `decree emit --machine %s`, with the body on stdin. Authenticated with %s.", e.Message.Machine, secret),
-			"security":    bearer,
-			"responses": obj{
-				"201": jsonResponse("The message is queued.", ref("Message")),
-				"400": errorResponse("A parameter outside its pattern, a body that breaks the endpoint's body rule, or a message decree rejected."),
-				"401": errorResponse("A missing or wrong bearer secret."),
-				"413": errorResponse(fmt.Sprintf("A body larger than %d bytes.", c.Limits.MaxBodyBytes)),
-				"429": rateLimited,
-				"500": errorResponse("decree could not queue the message."),
-			},
+		var op obj
+		if e.Action == config.ActionEvent {
+			op = eventOperation(c, e)
+		} else {
+			op = emitOperation(c, e)
 		}
 		if params != nil {
 			op["parameters"] = params
 		}
-		switch e.Body {
-		case config.BodyRequired:
-			op["requestBody"] = textBody(true, fmt.Sprintf("The message body, opaque text of at most %d bytes; it must not be blank.", c.Limits.MaxBodyBytes))
-		case config.BodyOptional:
-			op["requestBody"] = textBody(false, fmt.Sprintf("The message body, opaque text of at most %d bytes.", c.Limits.MaxBodyBytes))
-		}
 		add(e.Path, "post", op)
 	}
 
-	for _, rt := range c.BuiltinRoutes() {
-		switch rt.Path {
-		case config.HealthPath:
-			add(rt.Path, "get", obj{
-				"summary":  "The daemon's and the config's health",
-				"security": []any{},
-				"responses": obj{
-					"200": jsonResponse("The daemon runs, or is disabled, and the config loaded.", ref("Health")),
-					"503": jsonResponse("The daemon is enabled but not running, or the last config reload failed.", ref("Health")),
-				},
-			})
-		case config.StatusPath:
-			add(rt.Path, "get", obj{
-				"summary":     "A run's status",
-				"description": "Runs `decree status <id> --format json`. Authenticated with " + secretName(c, c.Builtins.Status.SecretEnv) + ".",
-				"security":    bearer,
-				"parameters":  []any{pathParameter("id", config.RunIDPattern, 0)},
-				"responses": obj{
-					"200": jsonResponse("decree's document of the run, unchanged.", ref("Run")),
-					"400": errorResponse("The id is outside its pattern."),
-					"401": errorResponse("A missing or wrong bearer secret."),
-					"404": errorResponse("decree knows no such run."),
-					"429": rateLimited,
-					"500": errorResponse("decree could not read the run."),
-				},
-			})
-		case config.RepliesPath:
-			add(rt.Path, "post", obj{
-				"summary":     "Reply to a run waiting for a person",
-				"description": "Runs `decree event <wait_id> <event> [-m=<note>] --format json`. Authenticated with " + secretName(c, c.Builtins.Replies.SecretEnv) + ".",
-				"security":    bearer,
-				"parameters": []any{
-					pathParameter("wait_id", config.RunIDPattern, 0),
-					pathParameter("event", config.RunIDPattern, 0),
-				},
-				"requestBody": textBody(false, fmt.Sprintf("The optional note, passed unchanged, of at most %d bytes.", c.Limits.MaxBodyBytes)),
-				"responses": obj{
-					"201": jsonResponse("The reply is queued.", ref("Reply")),
-					"400": errorResponse("A parameter outside its pattern, or a note holding a NUL byte."),
-					"401": errorResponse("A missing or wrong bearer secret."),
-					"409": errorResponse("The run is not waiting, or does not accept the event."),
-					"413": errorResponse(fmt.Sprintf("A note larger than %d bytes.", c.Limits.MaxBodyBytes)),
-					"429": rateLimited,
-					"500": errorResponse("decree could not queue the reply."),
-				},
-			})
-		case config.OpenAPIPath:
-			add(rt.Path, "get", obj{
-				"summary":  "This document",
-				"security": []any{},
-				"responses": obj{
-					"200": jsonResponse("The OpenAPI document of the loaded config.", obj{"type": "object"}),
-				},
-			})
-		}
-	}
+	add(config.HealthPath, "get", obj{
+		"summary":  "The daemon's and the config's health",
+		"security": []any{},
+		"responses": obj{
+			"200": jsonResponse("The daemon runs, or is disabled, and the config loaded.", ref("Health")),
+			"503": jsonResponse("The daemon is enabled but not running, or the last config reload failed.", ref("Health")),
+		},
+	})
+	add(config.OpenAPIPath, "get", obj{
+		"summary":  "This document",
+		"security": []any{},
+		"responses": obj{
+			"200": jsonResponse("The OpenAPI document of the loaded config.", obj{"type": "object"}),
+		},
+	})
 
 	doc := document{
 		OpenAPI: OpenAPIVersion,
 		Info: obj{
 			"title":       "decree-go-rest",
 			"version":     "1",
-			"description": "The HTTP front door of a decree project: each endpoint queues a decree message.",
+			"description": "The HTTP front door of a decree project: each endpoint queues a decree message, or replies to a run waiting for a person.",
 		},
 		Paths: paths,
 		Components: obj{
@@ -147,6 +88,64 @@ func openAPI(c *config.Config) ([]byte, error) {
 		return nil, fmt.Errorf("openapi document: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// emitOperation is the operation of an emit endpoint: SPEC.md §4.
+func emitOperation(c *config.Config, e config.Endpoint) obj {
+	machine := ""
+	if e.Message != nil {
+		machine = e.Message.Machine
+	}
+	op := obj{
+		"summary":     "Queue a message for machine " + machine,
+		"description": fmt.Sprintf("Runs `decree emit --machine %s`, with the body on stdin. Authenticated with %s.", machine, secretName(c, e.SecretEnv)),
+		"security":    bearer,
+		"responses": obj{
+			"201": jsonResponse("The message is queued.", ref("Message")),
+			"400": errorResponse("A parameter outside its pattern, a body that breaks the endpoint's body rule, or a message decree rejected."),
+			"401": errorResponse("A missing or wrong bearer secret."),
+			"413": errorResponse(fmt.Sprintf("A body larger than %d bytes.", c.Limits.MaxBodyBytes)),
+			"429": rateLimited,
+			"500": errorResponse("decree could not queue the message."),
+		},
+	}
+	switch e.Body {
+	case config.BodyRequired:
+		op["requestBody"] = textBody(true, fmt.Sprintf("The message body, opaque text of at most %d bytes; it must not be blank.", c.Limits.MaxBodyBytes))
+	case config.BodyOptional:
+		op["requestBody"] = textBody(false, fmt.Sprintf("The message body, opaque text of at most %d bytes.", c.Limits.MaxBodyBytes))
+	}
+	return op
+}
+
+// eventOperation is the operation of an event endpoint: it replies to a
+// run waiting in a person state, with the body as the note.
+func eventOperation(c *config.Config, e config.Endpoint) obj {
+	var to, event string
+	if e.Reply != nil {
+		to, event = e.Reply.To, e.Reply.Event
+	}
+	op := obj{
+		"summary":     "Reply " + event + " to a run waiting for a person",
+		"description": fmt.Sprintf("Runs `decree event %s %s [-m=<note>] --format json`, with the body as the note. Authenticated with %s.", to, event, secretName(c, e.SecretEnv)),
+		"security":    bearer,
+		"responses": obj{
+			"201": jsonResponse("The reply is queued.", ref("Reply")),
+			"400": errorResponse("A parameter outside its pattern, a note that breaks the endpoint's body rule, or a note holding a NUL byte."),
+			"401": errorResponse("A missing or wrong bearer secret."),
+			"409": errorResponse("The run is not waiting, or does not accept the event."),
+			"413": errorResponse(fmt.Sprintf("A note larger than %d bytes.", c.Limits.MaxBodyBytes)),
+			"429": rateLimited,
+			"500": errorResponse("decree could not queue the reply."),
+		},
+	}
+	switch e.Body {
+	case config.BodyRequired:
+		op["requestBody"] = textBody(true, fmt.Sprintf("The note, passed unchanged, of at most %d bytes; it must not be blank.", c.Limits.MaxBodyBytes))
+	case config.BodyOptional:
+		op["requestBody"] = textBody(false, fmt.Sprintf("The optional note, passed unchanged, of at most %d bytes.", c.Limits.MaxBodyBytes))
+	}
+	return op
 }
 
 // secretName says which bearer secret an operation whose secret_env is env
@@ -201,23 +200,13 @@ var schemas = obj{
 	},
 	"Reply": obj{
 		"type":                 "object",
-		"required":             []any{"id", "path"},
+		"required":             []any{"id", "path", "to", "event"},
 		"additionalProperties": false,
 		"properties": obj{
-			"id":   obj{"type": "string", "description": "The reply's message id."},
-			"path": obj{"type": "string", "description": "The queued file, relative to the project: .decree/inbox/<id>.md."},
-		},
-	},
-	"Run": obj{
-		"type":        "object",
-		"description": "`decree status <id> --format json`, described by decree's .decree/schema/v1/cli/status.schema.json.",
-		"required":    []any{"id", "machine", "status", "state", "events"},
-		"properties": obj{
-			"id":      obj{"type": "string"},
-			"machine": obj{"type": "string"},
-			"status":  obj{"enum": []any{"active", "waiting", "pending", "interrupted", "finished"}},
-			"state":   obj{"type": []any{"string", "null"}},
-			"events":  obj{"type": "array", "items": obj{"type": "object"}},
+			"id":    obj{"type": "string", "description": "The reply's message id."},
+			"path":  obj{"type": "string", "description": "The queued file, relative to the project: .decree/inbox/<id>.md."},
+			"to":    obj{"type": "string", "description": "The wait id of the run replied to."},
+			"event": obj{"type": "string", "description": "The event sent."},
 		},
 	},
 	"Health": obj{
@@ -281,9 +270,9 @@ func ref(schema string) obj {
 	return obj{"$ref": "#/components/schemas/" + schema}
 }
 
-// serveOpenAPI is GET /openapi.json (SPEC.md §7): no authentication, and
-// the document of the config this Server was built from, so it follows
-// reloads.
+// serveOpenAPI is GET /openapi.json (SPEC.md §7), when config.OpenAPIEnv
+// is true: no authentication, and the document of the config this Server
+// was built from, so it follows reloads.
 func (s *Server) serveOpenAPI(w http.ResponseWriter, r *http.Request) {
 	logged(r).route = config.OpenAPIPath
 	w.Header().Set("Content-Type", "application/json")

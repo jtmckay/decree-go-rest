@@ -14,19 +14,13 @@ limits:
   rate_max: 60                      # authenticated requests per window, all endpoints together
   rate_fail_max: 10                 # rejected requests per window (bad auth, unknown path, wrong method)
 
-builtins:
-  status: { enabled: true }         # GET  /runs/{id}; secret_env optional: the top-level secret
-  # Answering a run's question, such as an approval, deserves its own secret.
-  replies: { enabled: true, secret_env: DECREE_GO_REST_REPLY_SECRET }   # POST /runs/{wait_id}/replies/{event}
-  openapi: { enabled: true }        # GET  /openapi.json (no auth; it reveals paths, not secrets)
-
 endpoints:
   - path: /notify
     message:
       machine: notify
       params: { title: Untitled, priority: high }
 
-  - path: /notify/{title}
+  - path: /notify/{title}           # action: emit is the default
     patterns:
       title: '[A-Za-z0-9 _.-]{1,80}'
     message:
@@ -42,3 +36,13 @@ endpoints:
     message:
       machine: comfy_image
       params: { workflow: '{{type}}', output_prefix: 'comfy/{{name}}' }
+
+  # Answering a run's question, such as an approval, deserves its own secret.
+  - path: /approve/{wait_id}
+    action: event                   # reply to a run waiting in a person state
+    secret_env: DECREE_GO_REST_APPROVE_SECRET
+    patterns: { wait_id: '[A-Za-z0-9._-]{1,128}' }
+    body: optional                  # the note
+    reply:
+      to: '{{wait_id}}'
+      event: approve

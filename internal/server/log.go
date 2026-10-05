@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
 // requestRecord is what the handlers add to a request's log record.
@@ -73,14 +75,19 @@ func traceID(traceparent string) string {
 	return traceparentRE.FindStringSubmatch(traceparent)[2]
 }
 
-// LogRoutes writes one startup record per route: its method, its pattern
-// and the machine it emits to, or, for a built-in, builtin=true (SPEC.md
+// LogRoutes writes one startup record per route: its method, its pattern,
+// its action and, for an emit endpoint, the machine it emits to; then
+// /healthz and, when it is on, /openapi.json, with reserved=true (SPEC.md
 // §9).
 func (s *Server) LogRoutes() {
 	for _, e := range s.endpoints {
-		s.Logger.Info("route", "method", http.MethodPost, "route", e.route, "machine", e.machine)
+		if e.action == config.ActionEvent {
+			s.Logger.Info("route", "method", http.MethodPost, "route", e.route, "action", e.action)
+			continue
+		}
+		s.Logger.Info("route", "method", http.MethodPost, "route", e.route, "action", e.action, "machine", e.machine)
 	}
-	for _, rt := range s.builtins {
-		s.Logger.Info("route", "method", rt.Method, "route", rt.Path, "builtin", true)
+	for _, p := range s.reserved {
+		s.Logger.Info("route", "method", http.MethodGet, "route", p, "reserved", true)
 	}
 }

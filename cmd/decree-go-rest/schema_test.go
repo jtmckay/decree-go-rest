@@ -80,8 +80,15 @@ func TestAcceptanceExampleMatchesSchema(t *testing.T) {
 func TestSchemaRejects(t *testing.T) {
 	s := compileSchema(t)
 	ok := "endpoints: [{ path: /a, message: { machine: m } }]\n"
-	if err := s.Validate(yamlInstance(t, ok)); err != nil {
-		t.Fatalf("minimal config rejected: %v", err)
+	for _, src := range []string{
+		ok,
+		"endpoints: [{ path: /a, action: emit, message: { machine: m } }]\n",
+		"endpoints: [{ path: '/a/{w}', action: event, reply: { to: '{{w}}', event: review.ok } }]\n",
+		"endpoints: [{ path: '/a/{w}/{e}', action: event, body: none, reply: { to: '{{w}}', event: '{{e}}' } }]\n",
+	} {
+		if err := s.Validate(yamlInstance(t, src)); err != nil {
+			t.Fatalf("valid config rejected: %v\n%s", err, src)
+		}
 	}
 	for name, src := range map[string]string{
 		"no endpoints":     "listen: 127.0.0.1:1\n",
@@ -100,6 +107,15 @@ func TestSchemaRejects(t *testing.T) {
 		"list param":       "endpoints: [{ path: /a, message: { machine: m, params: { x: [1] } } }]\n",
 		"unknown endpoint": "endpoints: [{ path: /a, method: GET, message: { machine: m } }]\n",
 		"bad secret_env":   "secret_env: 'NOT A NAME'\n" + ok,
+		"bad action":       "endpoints: [{ path: /a, action: reply, message: { machine: m } }]\n",
+		"emit with reply":  "endpoints: [{ path: /a, message: { machine: m }, reply: { to: r, event: e } }]\n",
+		"emit no message":  "endpoints: [{ path: /a }]\n",
+		"event no reply":   "endpoints: [{ path: /a, action: event }]\n",
+		"event message":    "endpoints: [{ path: /a, action: event, message: { machine: m }, reply: { to: r, event: e } }]\n",
+		"event no to":      "endpoints: [{ path: /a, action: event, reply: { event: e } }]\n",
+		"bad event name":   "endpoints: [{ path: /a, action: event, reply: { to: r, event: Approve } }]\n",
+		"unknown reply":    "endpoints: [{ path: /a, action: event, reply: { to: r, event: e, note: x } }]\n",
+		"old key":          config.RemovedKey + ": {}\n" + ok,
 	} {
 		if err := s.Validate(yamlInstance(t, src)); err == nil {
 			t.Errorf("%s: accepted:\n%s", name, src)
@@ -158,6 +174,9 @@ func TestSchemaDescribesEveryKey(t *testing.T) {
 			ft := fields[k]
 			if ft == nil {
 				continue
+			}
+			if ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
 			}
 			pm := resolve(p.(map[string]any))
 			if ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct {
