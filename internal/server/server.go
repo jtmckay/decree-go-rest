@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -35,11 +36,23 @@ type Server struct {
 	EmitTimeout time.Duration
 	// Environ returns the service's environment; os.Environ by default.
 	Environ func() []string
+	// Logger receives the request records and emit failures; the default
+	// logger unless a test replaces it.
+	Logger *slog.Logger
+	// budgets are the rate budgets, shared with the Servers of later
+	// reloads.
+	budgets *budgets
 }
 
 // New builds the route table of a validated config. Secrets are read from
 // the environment now.
 func New(c *config.Config) (*Server, error) {
+	return newServer(c, newBudgets(c.Limits))
+}
+
+// newServer is New with the rate budgets given, so that a reload keeps
+// what the old config's requests spent.
+func newServer(c *config.Config, b *budgets) (*Server, error) {
 	bin, err := resolveDecree(c)
 	if err != nil {
 		return nil, err
@@ -51,6 +64,8 @@ func New(c *config.Config) (*Server, error) {
 		maxBody:     c.Limits.MaxBodyBytes,
 		EmitTimeout: DefaultEmitTimeout,
 		Environ:     os.Environ,
+		Logger:      slog.Default(),
+		budgets:     b,
 	}
 	allow := map[string][]string{}
 	var order []string
@@ -61,6 +76,7 @@ func New(c *config.Config) (*Server, error) {
 		}
 		s.endpoints = append(s.endpoints, e)
 		if err := handle(s.mux, http.MethodPost+" "+ce.Path, func(w http.ResponseWriter, r *http.Request) {
+			logged(r).route = e.route
 			s.serveEndpoint(w, r, e)
 		}); err != nil {
 			return nil, fmt.Errorf("endpoint %s: %w", ce.Path, err)
@@ -74,13 +90,15 @@ func New(c *config.Config) (*Server, error) {
 	for _, p := range order {
 		methods := strings.Join(allow[p], ", ")
 		if err := handle(s.mux, p, func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Allow", methods)
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			logged(r).route = p
+			s.reject(w, http.StatusMethodNotAllowed, "method not allowed", func(h http.Header) {
+				h.Set("Allow", methods)
+			})
 		}); err != nil {
 			return nil, fmt.Errorf("endpoint %s: %w", p, err)
 		}
 	}
-	if err := handle(s.mux, "/", notFound); err != nil {
+	if err := handle(s.mux, "/", s.notFound); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -109,10 +127,15 @@ func handle(mux *http.ServeMux, pattern string, h http.HandlerFunc) (err error) 
 	return nil
 }
 
-// ServeHTTP routes a request (SPEC.md §4 step 1). Exactly one trailing
-// slash is ignored; a path that is not in canonical form is unknown,
-// rather than redirected.
+// ServeHTTP routes a request (SPEC.md §4 step 1) and logs it (§9).
+// Exactly one trailing slash is ignored; a path that is not in canonical
+// form is unknown, rather than redirected.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	rec := &requestRecord{}
+	sw := &statusWriter{ResponseWriter: w}
+	defer func() { s.logRequest(r, rec, sw.status, time.Since(start)) }()
+
 	u := *r.URL
 	if ep := u.EscapedPath(); len(ep) > 1 && strings.HasSuffix(ep, "/") {
 		u.Path = strings.TrimSuffix(u.Path, "/")
@@ -120,21 +143,32 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			u.RawPath = strings.TrimSuffix(u.RawPath, "/")
 		}
 	}
+	r2 := r.WithContext(context.WithValue(r.Context(), requestRecordKey{}, rec))
+	r2.URL = &u
 	if ep := u.EscapedPath(); ep == "" || path.Clean(ep) != ep {
-		notFound(w, r)
+		s.notFound(sw, r2)
 		return
 	}
-	if u != *r.URL {
-		r2 := new(http.Request)
-		*r2 = *r
-		r2.URL = &u
-		r = r2
-	}
-	s.mux.ServeHTTP(w, r)
+	s.mux.ServeHTTP(sw, r2)
 }
 
-func notFound(w http.ResponseWriter, _ *http.Request) {
-	writeError(w, http.StatusNotFound, "not found")
+func (s *Server) notFound(w http.ResponseWriter, _ *http.Request) {
+	s.reject(w, http.StatusNotFound, "not found", nil)
+}
+
+// reject answers a request that failed routing, the method check or
+// authentication. It spends from the failure budget, and is a 429 instead
+// once that is exhausted (SPEC.md §6). header sets the headers of the
+// rejection itself, which a 429 does not carry.
+func (s *Server) reject(w http.ResponseWriter, status int, msg string, header func(http.Header)) {
+	if ok, retry := s.budgets.fail.take(s.budgets.now()); !ok {
+		tooManyRequests(w, retry)
+		return
+	}
+	if header != nil {
+		header(w.Header())
+	}
+	writeError(w, status, msg)
 }
 
 // writeError writes {"error": msg}, as every error response is.

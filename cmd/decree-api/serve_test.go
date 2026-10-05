@@ -90,6 +90,18 @@ func TestServeUntilSIGTERM(t *testing.T) {
 		t.Error("still accepting connections after exit")
 	}
 
+	logs := stderr.String()
+	for _, want := range []string{`"msg":"route"`, `"route":"/notify/{title}"`, `"msg":"request"`, `"status":201`} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("stderr lacks %s:\n%s", want, logs)
+		}
+	}
+	for _, leak := range []string{strings.Repeat("a", 64), "disk 3 is full", "/notify/backup"} {
+		if strings.Contains(logs, leak) {
+			t.Errorf("stderr contains %q:\n%s", leak, logs)
+		}
+	}
+
 	e := stub.Emits(t)[0]
 	if e.Umask != "0027" {
 		t.Errorf("decree's umask %q, want 0027", e.Umask)

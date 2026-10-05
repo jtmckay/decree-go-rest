@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"os/exec"
 	"regexp"
@@ -48,7 +47,7 @@ func (s *Server) emit(w http.ResponseWriter, r *http.Request, e *endpoint, args 
 	fail := func(reason string, attrs ...any) {
 		attrs = append([]any{"route", e.route, "machine", e.machine, "reason", reason,
 			"stderr", strings.TrimSpace(stderr.String())}, attrs...)
-		slog.Error("decree emit failed", attrs...)
+		s.Logger.Error("decree emit failed", attrs...)
 		writeError(w, http.StatusInternalServerError, queueFailed)
 	}
 	var exitErr *exec.ExitError
@@ -65,6 +64,7 @@ func (s *Server) emit(w http.ResponseWriter, r *http.Request, e *endpoint, args 
 			fail("unreadable output", "stdout", strings.TrimSpace(stdout.String()))
 			return
 		}
+		logged(r).messageID = res.ID
 		writeJSON(w, http.StatusCreated, map[string]string{
 			"id":      res.ID,
 			"path":    res.Path,

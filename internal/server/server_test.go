@@ -69,6 +69,9 @@ type fixture struct {
 	srv  *Server
 	stub *decreetest.Stub
 	proj string
+	// path is the config file, and cfg the config loaded from it.
+	path string
+	cfg  *config.Config
 }
 
 func write(t *testing.T, path, content string) {
@@ -116,7 +119,7 @@ func newFixture(t *testing.T, cfg string) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &fixture{srv: srv, stub: stub, proj: c.ProjectDir}
+	return &fixture{srv: srv, stub: stub, proj: c.ProjectDir, path: path, cfg: c}
 }
 
 type req struct {

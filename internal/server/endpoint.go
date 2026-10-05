@@ -73,11 +73,18 @@ func newEndpoint(c *config.Config, ce config.Endpoint) (*endpoint, error) {
 	return e, nil
 }
 
-// serveEndpoint is SPEC.md §4 steps 2 and 4–7 for a routed request.
+// serveEndpoint is SPEC.md §4 steps 2–7 for a routed request.
 func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *endpoint) {
 	if !authorized(r, e.secret) {
-		w.Header().Set("WWW-Authenticate", `Bearer`)
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+		s.reject(w, http.StatusUnauthorized, "unauthorized", func(h http.Header) {
+			h.Set("WWW-Authenticate", "Bearer")
+		})
+		return
+	}
+	// Only now, authenticated, does the request spend from rate_max; a 400
+	// below is the caller's bug, not an attack (SPEC.md §6).
+	if ok, retry := s.budgets.all.take(s.budgets.now()); !ok {
+		tooManyRequests(w, retry)
 		return
 	}
 

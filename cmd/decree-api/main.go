@@ -82,6 +82,8 @@ func runServe(path string, stderr io.Writer) int {
 	if c == nil {
 		return 1
 	}
+	// Logs are JSON lines on stderr (SPEC.md §9).
+	slog.SetDefault(slog.New(slog.NewJSONHandler(stderr, nil)))
 	server.SetUmask()
 	srv, err := server.New(c)
 	if err != nil {
@@ -93,8 +95,17 @@ func runServe(path string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "decree-api: %v\n", err)
 		return 1
 	}
+	srv.LogRoutes()
 	slog.Info("listening", "addr", ln.Addr().String(), "project", c.ProjectDir)
-	if err := server.Serve(ctx, ln, srv); err != nil {
+	// The config is reloaded on change (SPEC.md §8) while it serves.
+	live := server.NewLive(path, c, srv)
+	reloads := make(chan struct{})
+	rctx, stopReloads := context.WithCancel(ctx)
+	go func() { defer close(reloads); live.Run(rctx) }()
+	err = server.Serve(ctx, ln, live)
+	stopReloads()
+	<-reloads
+	if err != nil {
 		fmt.Fprintf(stderr, "decree-api: %v\n", err)
 		return 1
 	}
