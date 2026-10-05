@@ -151,17 +151,9 @@ func (e *endpoint) pathValues(r *http.Request) (map[string]string, string) {
 // readBody is SPEC.md §4 step 5. On failure it returns the status and
 // message of the response.
 func (s *Server) readBody(w http.ResponseWriter, r *http.Request, rule string) ([]byte, int, string) {
-	tooLarge := fmt.Sprintf("the body is larger than %d bytes", s.maxBody)
-	if r.ContentLength > s.maxBody {
-		return nil, http.StatusRequestEntityTooLarge, tooLarge
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.maxBody))
-	if err != nil {
-		var mbe *http.MaxBytesError
-		if errors.As(err, &mbe) {
-			return nil, http.StatusRequestEntityTooLarge, tooLarge
-		}
-		return nil, http.StatusBadRequest, "cannot read the body"
+	body, status, msg := s.readCapped(w, r)
+	if status != 0 {
+		return nil, status, msg
 	}
 	switch rule {
 	case config.BodyRequired:
@@ -175,6 +167,24 @@ func (s *Server) readBody(w http.ResponseWriter, r *http.Request, rule string) (
 	}
 	if len(body) > 0 && body[len(body)-1] != '\n' {
 		body = append(body, '\n')
+	}
+	return body, 0, ""
+}
+
+// readCapped reads the body, at most max_body_bytes. On failure it returns
+// the status and message of the response.
+func (s *Server) readCapped(w http.ResponseWriter, r *http.Request) ([]byte, int, string) {
+	tooLarge := fmt.Sprintf("the body is larger than %d bytes", s.maxBody)
+	if r.ContentLength > s.maxBody {
+		return nil, http.StatusRequestEntityTooLarge, tooLarge
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.maxBody))
+	if err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			return nil, http.StatusRequestEntityTooLarge, tooLarge
+		}
+		return nil, http.StatusBadRequest, "cannot read the body"
 	}
 	return body, 0, ""
 }

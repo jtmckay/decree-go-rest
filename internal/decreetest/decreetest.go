@@ -30,6 +30,30 @@ type Stub struct {
 const script = `#!/bin/sh
 d=$(dirname "$0")
 { printf 'cwd=%s' "$PWD"; for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; } >> "$d/calls.log"
+# record saves this call of $cmd in $cmd.<n>.*, NUL-separating argv so that an
+# argument holding a newline survives, and lists <n> in $cmd.calls.
+record() {
+	n=$$
+	printf '%s\n' "$PWD" > "$d/$cmd.$n.cwd"
+	for a in "$@"; do printf '%s\0' "$a"; done > "$d/$cmd.$n.argv"
+	env > "$d/$cmd.$n.env"
+	umask > "$d/$cmd.$n.umask"
+	cat > "$d/$cmd.$n.stdin"
+	echo "$n" >> "$d/$cmd.calls"
+}
+# answer prints $1's answer, after its sleep if one is set: its stderr and
+# exit code when that is not 0, else its stdout.
+answer() {
+	if [ -s "$d/$1.sleep" ]; then sleep "$(cat "$d/$1.sleep")"; fi
+	code=$(cat "$d/$1.exit")
+	if [ "$code" != 0 ]; then
+		cat "$d/$1.stderr" >&2
+		exit "$code"
+	fi
+	cat "$d/$1.json"
+	exit 0
+}
+cmd=$1
 case "$1" in
 --version|-v)
 	cat "$d/version"
@@ -41,14 +65,12 @@ check)
 	if [ "$code" != 0 ]; then echo "error: decree check found errors" >&2; fi
 	exit "$code"
 	;;
+status|event)
+	record "$@"
+	answer "$cmd"
+	;;
 emit)
-	n=$$
-	printf '%s\n' "$PWD" > "$d/emit.$n.cwd"
-	for a in "$@"; do printf '%s\n' "$a"; done > "$d/emit.$n.argv"
-	env > "$d/emit.$n.env"
-	umask > "$d/emit.$n.umask"
-	cat > "$d/emit.$n.stdin"
-	echo "$n" >> "$d/emits.log"
+	record "$@"
 	if [ -s "$d/emit.sleep" ]; then sleep "$(cat "$d/emit.sleep")"; fi
 	code=$(cat "$d/emit.exit")
 	echo "emit-done $n" >> "$d/events.log"
@@ -105,6 +127,8 @@ func New(t testing.TB) *Stub {
 	s.SetEmit(t, 0, "")
 	s.write(t, "emit.json", "")
 	s.write(t, "emit.sleep", "")
+	s.SetStatus(t, 0, RunStatus, "")
+	s.SetEvent(t, 0, EventReply, "")
 	s.write(t, "daemon.term", "")
 	s.write(t, "daemon.ticks", "")
 	return s
@@ -132,8 +156,61 @@ func (s *Stub) SetEmitSleep(t testing.TB, d string) {
 	s.write(t, "emit.sleep", d)
 }
 
-// Emit is one recorded `decree emit`.
-type Emit struct {
+// RunStatus is `decree status <id> --format json` for a run waiting in a
+// person state, as decree 0.5 prints it; the stub prints it by default.
+const RunStatus = `{
+  "id": "20261005T043125Z-0a1b2c",
+  "machine": "review",
+  "status": "waiting",
+  "state": "approval",
+  "events": [
+    {"event":"claimed","exit_code":null,"from":null,"machine":"review","run_id":"20261005T043125Z-0a1b2c","seq":1,"source":"claim","to":"approval","trigger":"inbox","ts":"2026-10-05T04:31:26.000Z","type":"transition","v":1}
+  ]
+}
+`
+
+// EventReply is `decree event --format json` for a queued reply, as decree
+// 0.5 prints it; the stub prints it by default.
+const EventReply = `{
+  "id": "20261005T043200Z-3d4e5f",
+  "path": ".decree/inbox/20261005T043200Z-3d4e5f.md"
+}
+`
+
+// SetStatus sets what `decree status` prints on stdout and stderr, and its
+// exit code. stdout is printed only on exit 0, stderr only otherwise.
+func (s *Stub) SetStatus(t testing.TB, exit int, stdout, stderr string) {
+	t.Helper()
+	s.setAnswer(t, "status", exit, stdout, stderr)
+}
+
+// SetEvent sets what `decree event` prints on stdout and stderr, and its
+// exit code. stdout is printed only on exit 0, stderr only otherwise.
+func (s *Stub) SetEvent(t testing.TB, exit int, stdout, stderr string) {
+	t.Helper()
+	s.setAnswer(t, "event", exit, stdout, stderr)
+}
+
+func (s *Stub) setAnswer(t testing.TB, cmd string, exit int, stdout, stderr string) {
+	t.Helper()
+	s.write(t, cmd+".exit", strconv.Itoa(exit)+"\n")
+	s.write(t, cmd+".json", stdout)
+	s.write(t, cmd+".stderr", stderr)
+	s.SetSleep(t, cmd, "")
+}
+
+// SetSleep makes `decree status` or `decree event` (cmd) sleep before it
+// answers; d is an argument of sleep(1), such as "0.5" or "" for none.
+func (s *Stub) SetSleep(t testing.TB, cmd, d string) {
+	t.Helper()
+	s.write(t, cmd+".sleep", d)
+}
+
+// Emit is one recorded `decree emit`, `decree status` or `decree event`.
+type Emit = Invocation
+
+// Invocation is one recorded call of a decree command.
+type Invocation struct {
 	// Args are the arguments after the program name.
 	Args []string
 	// Dir is the working directory.
@@ -150,7 +227,7 @@ type Emit struct {
 }
 
 // Getenv returns the value of name in the recorded environment.
-func (e Emit) Getenv(name string) (string, bool) {
+func (e Invocation) Getenv(name string) (string, bool) {
 	for _, kv := range e.Env {
 		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
 			return v, true
@@ -162,25 +239,35 @@ func (e Emit) Getenv(name string) (string, bool) {
 // Emits returns every `decree emit` the stub completed, in order.
 func (s *Stub) Emits(t testing.TB) []Emit {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(s.Dir, "emits.log"))
+	return s.Invocations(t, "emit")
+}
+
+// Invocations returns every recorded call of cmd ("emit", "status" or
+// "event"), in order.
+func (s *Stub) Invocations(t testing.TB, cmd string) []Invocation {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(s.Dir, cmd+".calls"))
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []Emit
+	var out []Invocation
 	for _, n := range strings.Fields(string(raw)) {
-		base := filepath.Join(s.Dir, "emit."+n+".")
-		e := Emit{
-			Args:      lines(s.read(t, base+"argv")),
+		base := filepath.Join(s.Dir, cmd+"."+n+".")
+		var args []string
+		if a := s.read(t, base+"argv"); a != "" {
+			args = strings.Split(strings.TrimSuffix(a, "\x00"), "\x00")
+		}
+		out = append(out, Invocation{
+			Args:      args,
 			Dir:       strings.TrimSuffix(s.read(t, base+"cwd"), "\n"),
 			Env:       lines(s.read(t, base+"env")),
 			Stdin:     []byte(s.read(t, base+"stdin")),
 			StdinFile: base + "stdin",
 			Umask:     strings.TrimSpace(s.read(t, base+"umask")),
-		}
-		out = append(out, e)
+		})
 	}
 	return out
 }

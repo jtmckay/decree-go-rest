@@ -32,6 +32,13 @@ type Server struct {
 	projectDir string
 	// maxBody is limits.max_body_bytes.
 	maxBody int64
+	// secret is the default secret, which the built-ins under /runs/
+	// take; nil when neither is enabled.
+	secret []byte
+	// openapi is the document GET /openapi.json serves.
+	openapi []byte
+	// builtins are the built-in routes served, /healthz first.
+	builtins []config.Route
 	// EmitTimeout bounds each `decree emit` (SPEC.md §4 step 6).
 	EmitTimeout time.Duration
 	// Environ returns the service's environment; os.Environ by default.
@@ -69,8 +76,6 @@ func newServer(c *config.Config, b *budgets) (*Server, error) {
 		Logger:      slog.Default(),
 		budgets:     b,
 	}
-	allow := map[string][]string{}
-	var order []string
 	for _, ce := range c.Endpoints {
 		e, err := newEndpoint(c, ce)
 		if err != nil {
@@ -83,34 +88,8 @@ func newServer(c *config.Config, b *budgets) (*Server, error) {
 		}); err != nil {
 			return nil, fmt.Errorf("endpoint %s: %w", ce.Path, err)
 		}
-		if _, ok := allow[ce.Path]; !ok {
-			order = append(order, ce.Path)
-		}
-		allow[ce.Path] = append(allow[ce.Path], http.MethodPost)
 	}
-	// A known path with any other method is a 405 naming the allowed ones.
-	for _, p := range order {
-		methods := strings.Join(allow[p], ", ")
-		if err := handle(s.mux, p, func(w http.ResponseWriter, r *http.Request) {
-			logged(r).route = p
-			s.reject(w, http.StatusMethodNotAllowed, "method not allowed", func(h http.Header) {
-				h.Set("Allow", methods)
-			})
-		}); err != nil {
-			return nil, fmt.Errorf("endpoint %s: %w", p, err)
-		}
-	}
-	// /healthz needs no secret and spends from no budget (SPEC.md §7);
-	// another method on it is a 405, as on any known path.
-	if err := handle(s.mux, http.MethodGet+" "+HealthRoute, s.serveHealth); err != nil {
-		return nil, err
-	}
-	if err := handle(s.mux, HealthRoute, func(w http.ResponseWriter, r *http.Request) {
-		logged(r).route = HealthRoute
-		s.reject(w, http.StatusMethodNotAllowed, "method not allowed", func(h http.Header) {
-			h.Set("Allow", "GET, HEAD")
-		})
-	}); err != nil {
+	if err := s.handleBuiltins(c); err != nil {
 		return nil, err
 	}
 	if err := handle(s.mux, "/", s.notFound); err != nil {
@@ -167,7 +146,80 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.notFound(sw, r2)
 		return
 	}
+	// A known path with another method is a 405 naming the allowed ones.
+	// Every pattern but the catch-all has a method: one without would
+	// conflict with a configured path such as /{name}, which no
+	// validation rule forbids.
+	if _, pattern := s.mux.Handler(r2); pattern == "/" {
+		if route, allow := s.allowed(r2); allow != "" {
+			s.methodNotAllowed(route, allow)(sw, r2)
+			return
+		}
+	}
 	s.mux.ServeHTTP(sw, r2)
+}
+
+// allowed returns the route that r's path matches with another method,
+// and the methods that route allows, or "" when no route has the path.
+func (s *Server) allowed(r *http.Request) (route, allow string) {
+	var methods []string
+	for _, m := range []string{http.MethodGet, http.MethodPost} {
+		probe := *r
+		probe.Method = m
+		_, pattern := s.mux.Handler(&probe)
+		if pattern == "/" {
+			continue
+		}
+		_, route, _ = strings.Cut(pattern, " ")
+		methods = append(methods, m)
+		if m == http.MethodGet {
+			methods = append(methods, http.MethodHead)
+		}
+	}
+	return route, strings.Join(methods, ", ")
+}
+
+// handleBuiltins registers /healthz and the built-ins c enables (SPEC.md
+// §7).
+func (s *Server) handleBuiltins(c *config.Config) error {
+	if c.Builtins.Status || c.Builtins.Replies {
+		secret := os.Getenv(c.SecretEnv)
+		if len(secret) < config.MinSecretLen {
+			return fmt.Errorf("secret %s is not set or shorter than %d characters", c.SecretEnv, config.MinSecretLen)
+		}
+		s.secret = []byte(secret)
+	}
+	if c.Builtins.OpenAPI {
+		doc, err := openAPI(c)
+		if err != nil {
+			return err
+		}
+		s.openapi = doc
+	}
+	handlers := map[string]http.HandlerFunc{
+		config.HealthPath:  s.serveHealth,
+		config.StatusPath:  s.serveStatus,
+		config.RepliesPath: s.serveReply,
+		config.OpenAPIPath: s.serveOpenAPI,
+	}
+	s.builtins = c.BuiltinRoutes()
+	for _, rt := range s.builtins {
+		if err := handle(s.mux, rt.Method+" "+rt.Path, handlers[rt.Path]); err != nil {
+			return fmt.Errorf("built-in %s: %w", rt.Path, err)
+		}
+	}
+	return nil
+}
+
+// methodNotAllowed answers a known route with the wrong method: a 405
+// naming the allowed ones, charged to the failure budget.
+func (s *Server) methodNotAllowed(route, allow string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		logged(r).route = route
+		s.reject(w, http.StatusMethodNotAllowed, "method not allowed", func(h http.Header) {
+			h.Set("Allow", allow)
+		})
+	}
 }
 
 func (s *Server) notFound(w http.ResponseWriter, _ *http.Request) {

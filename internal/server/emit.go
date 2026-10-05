@@ -20,7 +20,8 @@ const queueFailed = "could not queue the message"
 
 var lookPath = exec.LookPath
 
-// emitResult is `decree emit --format json` (schema/v1/cli/emit.schema.json).
+// emitResult is `decree emit --format json` (schema/v1/cli/emit.schema.json)
+// and `decree event --format json` (event.schema.json), which share a shape.
 type emitResult struct {
 	ID   string `json:"id"`
 	Path string `json:"path"`
@@ -29,57 +30,87 @@ type emitResult struct {
 // emit runs decree with args and the body on stdin, and responds as
 // SPEC.md §4 step 7 says.
 func (s *Server) emit(w http.ResponseWriter, r *http.Request, e *endpoint, args []string, body []byte) {
-	// The request's context is not used: once started, an emit finishes
-	// even if the client goes away, so a queued message is never cut short.
-	ctx, cancel := context.WithTimeout(context.Background(), s.EmitTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, s.decree, args...)
-	cmd.Dir = s.projectDir
-	cmd.Env = childEnv(s.Environ(), r.Header)
-	cmd.Stdin = bytes.NewReader(body)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	// A child that keeps the pipes open after decree is killed must not
-	// hold the response.
-	cmd.WaitDelay = time.Second
-	err := cmd.Run()
-
+	res := s.runDecree(r, args, body)
 	fail := func(reason string, attrs ...any) {
 		attrs = append([]any{"route", e.route, "machine", e.machine, "reason", reason,
-			"stderr", strings.TrimSpace(stderr.String())}, attrs...)
+			"stderr", strings.TrimSpace(res.stderr.String())}, attrs...)
 		s.Logger.Error("decree emit failed", attrs...)
 		writeError(w, http.StatusInternalServerError, queueFailed)
 	}
-	var exitErr *exec.ExitError
 	switch {
-	case ctx.Err() != nil:
+	case res.timedOut:
 		fail("timed out after " + s.EmitTimeout.String())
-	case errors.As(err, &exitErr) && exitErr.ExitCode() == 1:
-		writeError(w, http.StatusBadRequest, decreeMessage(stderr.String()))
-	case err != nil:
-		fail(err.Error())
+	case res.exitCode() == 1:
+		writeError(w, http.StatusBadRequest, decreeMessage(res.stderr.String(), "decree rejected the message"))
+	case res.err != nil:
+		fail(res.err.Error())
 	default:
-		var res emitResult
-		if jerr := json.Unmarshal(stdout.Bytes(), &res); jerr != nil || res.ID == "" || res.Path == "" {
-			fail("unreadable output", "stdout", strings.TrimSpace(stdout.String()))
+		var out emitResult
+		if jerr := json.Unmarshal(res.stdout.Bytes(), &out); jerr != nil || out.ID == "" || out.Path == "" {
+			fail("unreadable output", "stdout", strings.TrimSpace(res.stdout.String()))
 			return
 		}
-		logged(r).messageID = res.ID
+		logged(r).messageID = out.ID
 		writeJSON(w, http.StatusCreated, map[string]string{
-			"id":      res.ID,
-			"path":    res.Path,
+			"id":      out.ID,
+			"path":    out.Path,
 			"machine": e.machine,
 		})
 	}
 }
 
+// decreeResult is how a decree command ended.
+type decreeResult struct {
+	stdout, stderr bytes.Buffer
+	// err is the error of exec.Cmd.Run.
+	err error
+	// timedOut is whether the timeout killed it.
+	timedOut bool
+}
+
+// exitCode is decree's exit code, or -1 when it did not exit by itself.
+func (res *decreeResult) exitCode() int {
+	if res.timedOut {
+		return -1
+	}
+	if res.err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(res.err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
+}
+
+// runDecree runs decree with args in the project, with stdin, the
+// request's environment of SPEC.md §4 step 6 and the EmitTimeout. The
+// request's context is not used: once started, a command finishes even if
+// the client goes away, so a queued message is never cut short.
+func (s *Server) runDecree(r *http.Request, args []string, stdin []byte) *decreeResult {
+	ctx, cancel := context.WithTimeout(context.Background(), s.EmitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, s.decree, args...)
+	cmd.Dir = s.projectDir
+	cmd.Env = childEnv(s.Environ(), r.Header)
+	cmd.Stdin = bytes.NewReader(stdin)
+	res := &decreeResult{}
+	cmd.Stdout, cmd.Stderr = &res.stdout, &res.stderr
+	// A child that keeps the pipes open after decree is killed must not
+	// hold the response.
+	cmd.WaitDelay = time.Second
+	res.err = cmd.Run()
+	res.timedOut = ctx.Err() != nil
+	return res
+}
+
 // decreeMessage is decree's error message from its stderr, without the
-// "error: " label it prints before it.
-func decreeMessage(stderr string) string {
+// "error: " label it prints before it, or fallback when it printed none.
+func decreeMessage(stderr, fallback string) string {
 	msg := strings.TrimSpace(stderr)
 	msg = strings.TrimSpace(strings.TrimPrefix(msg, "error:"))
 	if msg == "" {
-		return "decree rejected the message"
+		return fallback
 	}
 	return msg
 }

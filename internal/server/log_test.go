@@ -158,14 +158,26 @@ func TestLogRoutes(t *testing.T) {
 	f.srv.LogRoutes()
 	var got []string
 	for _, m := range logs.records(t) {
-		if m["msg"] == "route" {
-			got = append(got, m["method"].(string)+" "+m["route"].(string)+" -> "+m["machine"].(string))
+		if m["msg"] != "route" {
+			continue
 		}
+		line := m["method"].(string) + " " + m["route"].(string)
+		if machine, ok := m["machine"].(string); ok {
+			line += " -> " + machine
+		}
+		if m["builtin"] == true {
+			line += " (built-in)"
+		}
+		got = append(got, line)
 	}
 	want := []string{
 		"POST /notify -> notify",
 		"POST /notify/{title} -> notify",
 		"POST /comfy/{type}/{name} -> comfy_image",
+		"GET /healthz (built-in)",
+		"GET /runs/{id} (built-in)",
+		"POST /runs/{wait_id}/replies/{event} (built-in)",
+		"GET /openapi.json (built-in)",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("route records:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

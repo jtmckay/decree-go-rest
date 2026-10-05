@@ -78,6 +78,39 @@ type Builtins struct {
 	OpenAPI bool `yaml:"openapi"`
 }
 
+// Paths of the built-in endpoints (SPEC.md §7).
+const (
+	HealthPath  = "/healthz"
+	StatusPath  = "/runs/{id}"
+	RepliesPath = "/runs/{wait_id}/replies/{event}"
+	OpenAPIPath = "/openapi.json"
+)
+
+// RunIDPattern is the pattern of every parameter of the built-ins under
+// /runs/, anchored when it is matched.
+const RunIDPattern = `[A-Za-z0-9._-]{1,128}`
+
+// Route is a method and a path, as a built-in is served.
+type Route struct {
+	Method, Path string
+}
+
+// BuiltinRoutes returns the built-ins c enables, /healthz first; /healthz
+// is always served.
+func (c *Config) BuiltinRoutes() []Route {
+	out := []Route{{"GET", HealthPath}}
+	if c.Builtins.Status {
+		out = append(out, Route{"GET", StatusPath})
+	}
+	if c.Builtins.Replies {
+		out = append(out, Route{"POST", RepliesPath})
+	}
+	if c.Builtins.OpenAPI {
+		out = append(out, Route{"GET", OpenAPIPath})
+	}
+	return out
+}
+
 // Endpoint is one configured endpoint.
 type Endpoint struct {
 	Path      string            `yaml:"path"`

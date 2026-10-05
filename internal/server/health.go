@@ -3,10 +3,12 @@ package server
 import (
 	"net/http"
 	"time"
+
+	"github.com/jtmckay/decree-api/internal/config"
 )
 
 // HealthRoute is the path of the health endpoint (SPEC.md §7).
-const HealthRoute = "/healthz"
+const HealthRoute = config.HealthPath
 
 // DaemonState is the supervised daemon's state, as /healthz reports it.
 type DaemonState struct {

@@ -74,9 +74,13 @@ func traceID(traceparent string) string {
 }
 
 // LogRoutes writes one startup record per route: its method, its pattern
-// and the machine it emits to (SPEC.md §9).
+// and the machine it emits to, or, for a built-in, builtin=true (SPEC.md
+// §9).
 func (s *Server) LogRoutes() {
 	for _, e := range s.endpoints {
 		s.Logger.Info("route", "method", http.MethodPost, "route", e.route, "machine", e.machine)
+	}
+	for _, rt := range s.builtins {
+		s.Logger.Info("route", "method", rt.Method, "route", rt.Path, "builtin", true)
 	}
 }

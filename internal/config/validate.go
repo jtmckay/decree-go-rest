@@ -170,10 +170,27 @@ func (v *validator) paths() {
 			continue
 		}
 		seen[p] = true
-		if err := register(mux, p); err != nil {
+		if err := v.builtinConflict(p); err != nil {
+			v.add(p, RulePath, "conflicts with a built-in endpoint: %v", err)
+			continue
+		}
+		if err := register(mux, "POST "+p); err != nil {
 			v.add(p, RulePath, "conflicts with another endpoint: %v", err)
 		}
 	}
+}
+
+// builtinConflict reports whether POST p conflicts, as a net/http
+// pattern, with an enabled built-in, which a path outside the built-ins'
+// prefixes can, such as /{a}/{b}/{c}/x with POST /runs/{wait_id}/replies/{event}.
+func (v *validator) builtinConflict(p string) error {
+	mux := http.NewServeMux()
+	for _, rt := range v.c.BuiltinRoutes() {
+		if err := register(mux, rt.Method+" "+rt.Path); err != nil {
+			return err
+		}
+	}
+	return register(mux, "POST "+p)
 }
 
 // pathShape checks one path's shape and reports every problem with it.
@@ -226,23 +243,23 @@ func (v *validator) reserved(p string) string {
 	switch {
 	case (b.Status || b.Replies) && strings.HasPrefix(p, "/runs/"):
 		return "/runs/"
-	case under("/healthz"):
-		return "/healthz"
-	case b.OpenAPI && under("/openapi.json"):
-		return "/openapi.json"
+	case under(HealthPath):
+		return HealthPath
+	case b.OpenAPI && under(OpenAPIPath):
+		return OpenAPIPath
 	}
 	return ""
 }
 
-// register adds a path to mux as a POST pattern, turning the panic
-// net/http raises for a bad or conflicting pattern into an error.
-func register(mux *http.ServeMux, path string) (err error) {
+// register adds a pattern to mux, turning the panic net/http raises for a
+// bad or conflicting pattern into an error.
+func register(mux *http.ServeMux, pattern string) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%v", r)
 		}
 	}()
-	mux.HandleFunc("POST "+path, func(http.ResponseWriter, *http.Request) {})
+	mux.HandleFunc(pattern, func(http.ResponseWriter, *http.Request) {})
 	return nil
 }
 

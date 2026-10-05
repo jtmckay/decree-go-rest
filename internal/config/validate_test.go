@@ -162,6 +162,17 @@ func TestValidateRules(t *testing.T) {
 		{name: "path: /runs/ free when its built-ins are off", body: "builtins: { status: false, replies: false }\nendpoints:\n  - path: /runs/x\n    message: { machine: notify }\n"},
 		{name: "path: /healthz", body: "endpoints:\n  - path: /healthz\n    message: { machine: notify }\n", want: []want{{"/healthz", config.RulePath, "under /healthz"}}},
 		{name: "path: /openapi.json", body: "endpoints:\n  - path: /openapi.json\n    message: { machine: notify }\n", want: []want{{"/openapi.json", config.RulePath, "under /openapi.json"}}},
+		{name: "path: conflicts with a built-in", body: "endpoints:\n  - path: /{a}/{b}/{c}/x\n    message: { machine: notify, params: { title: '{{a}}{{b}}{{c}}' } }\n",
+			want: []want{{"/{a}/{b}/{c}/x", config.RulePath, "conflicts with a built-in endpoint"}}},
+		{name: "path: no conflict when that built-in is off", body: "builtins: { replies: false }\nendpoints:\n  - path: /{a}/{b}/{c}/x\n    message: { machine: notify, params: { title: '{{a}}{{b}}{{c}}' } }\n"},
+		{name: "path: wildcards beside the built-ins pass", body: `endpoints:
+  - path: /{a}
+    message: { machine: notify, params: { title: '{{a}}' } }
+  - path: /{a}/x
+    message: { machine: notify, params: { title: '{{a}}' } }
+  - path: /{a}/{b}/{c}
+    message: { machine: notify, params: { title: '{{a}}{{b}}{{c}}' } }
+`},
 		{name: "path: /openapi.json free when openapi is off", body: "builtins: { openapi: false }\nendpoints:\n  - path: /openapi.json\n    message: { machine: notify }\n"},
 
 		// Step 2: patterns.

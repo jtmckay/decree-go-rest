@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jtmckay/decree-api/internal/config"
 	"github.com/jtmckay/decree-api/internal/decreetest"
@@ -191,5 +192,47 @@ func TestExampleMatchesSpec(t *testing.T) {
 	s = s[:strings.Index(s, "```")]
 	if s != string(example) {
 		t.Errorf("decree-api.example.yml differs from SPEC.md §3's example")
+	}
+}
+
+// TestStartupRejectsPathUnderBuiltin: a configured path under an enabled
+// built-in's prefix is a startup error, for -check and for serving alike
+// (SPEC.md §7).
+func TestStartupRejectsPathUnderBuiltin(t *testing.T) {
+	path, _ := exampleProject(t)
+	write(t, path, `project: .
+daemon: { enabled: false }
+endpoints:
+  - path: /runs/{title}
+    message: { machine: notify, params: { title: '{{title}}' } }
+  - path: /openapi.json
+    message: { machine: notify }
+  - path: /healthz/x
+    message: { machine: notify }
+`)
+	t.Setenv(config.ListenEnv, "127.0.0.1:0")
+	wants := []string{
+		"endpoint /runs/{title}: path: is under /runs/, which the enabled built-in uses",
+		"endpoint /openapi.json: path: is under /openapi.json, which the enabled built-in uses",
+		"endpoint /healthz/x: path: is under /healthz, which the enabled built-in uses",
+	}
+	for _, args := range [][]string{{"-check", "-config", path}, {"-config", path}} {
+		done := make(chan struct{})
+		var code int
+		var errOut string
+		go func() { defer close(done); code, _, errOut = runCLI(args...) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%q: still running; it should refuse to start", args)
+		}
+		if code != 1 {
+			t.Errorf("%q: exit %d, want 1", args, code)
+		}
+		for _, w := range wants {
+			if !strings.Contains(errOut, w) {
+				t.Errorf("%q: stderr lacks %q:\n%s", args, w, errOut)
+			}
+		}
 	}
 }
