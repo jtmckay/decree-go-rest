@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -468,4 +469,38 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// Substitute replaces each {{name}} placeholder in s with values[name], in
+// one pass: a substituted value is never expanded again.
+func Substitute(s string, values map[string]string) string {
+	return placeholderRE.ReplaceAllStringFunc(s, func(m string) string {
+		return values[m[2:len(m)-2]]
+	})
+}
+
+// ParamText is the text of a validated `params` value as decree's
+// `--param <key>=<value>` takes it: a string as written, an int in decimal
+// and a bool as true or false. template is whether it holds placeholders.
+func ParamText(n *yaml.Node) (text string, template bool, err error) {
+	if n.Kind != yaml.ScalarNode {
+		return "", false, fmt.Errorf("not a scalar")
+	}
+	switch n.Tag {
+	case "!!str":
+		return n.Value, placeholderRE.MatchString(n.Value), nil
+	case "!!int":
+		var i int64
+		if err := n.Decode(&i); err != nil {
+			return "", false, err
+		}
+		return strconv.FormatInt(i, 10), false, nil
+	case "!!bool":
+		var b bool
+		if err := n.Decode(&b); err != nil {
+			return "", false, err
+		}
+		return strconv.FormatBool(b), false, nil
+	}
+	return "", false, fmt.Errorf("a %s value is not a string, int or bool", scalarType(n))
 }

@@ -166,8 +166,8 @@ func TestCommandLine(t *testing.T) {
 	if code, _, _ := runCLI("-check", "extra"); code != 2 {
 		t.Errorf("extra argument: exit %d, want 2", code)
 	}
-	if code, _, errOut := runCLI(); code != 2 || !strings.Contains(errOut, "-check") {
-		t.Errorf("no -check: exit %d, stderr %q", code, errOut)
+	if code, _, errOut := runCLI("-config", filepath.Join(t.TempDir(), "missing.yml")); code != 1 || !strings.Contains(errOut, "config invalid") {
+		t.Errorf("serve without a config: exit %d, stderr %q", code, errOut)
 	}
 }
 
