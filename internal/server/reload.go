@@ -33,6 +33,9 @@ type Live struct {
 	Settle       time.Duration
 	// Logger receives the reload records.
 	Logger *slog.Logger
+	// Daemon reports the supervised daemon for /healthz; set it before
+	// serving. While it is nil an enabled daemon counts as not running.
+	Daemon func() DaemonState
 
 	path string
 	cur  atomic.Pointer[Server]
@@ -63,6 +66,7 @@ func NewLive(path string, c *config.Config, s *Server) *Live {
 		loadedAt:     time.Now(),
 		seen:         stampOf(path),
 	}
+	s.health = l.health
 	l.cur.Store(s)
 	return l
 }
@@ -152,6 +156,7 @@ func (l *Live) Reload() error {
 	next.EmitTimeout = old.EmitTimeout
 	next.Environ = old.Environ
 	next.Logger = old.Logger
+	next.health = old.health
 	old.budgets.setLimits(serving.Limits)
 	l.cur.Store(next)
 

@@ -167,3 +167,18 @@ func TestParseDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestDurationString(t *testing.T) {
+	for in, want := range map[time.Duration]string{
+		0: "0s", 2 * time.Second: "2s", 90 * time.Second: "90s", time.Minute: "1m",
+		5 * time.Minute: "5m", 3 * time.Hour: "3h", 48 * time.Hour: "2d", 25 * time.Hour: "25h",
+	} {
+		got := Duration(in).String()
+		if got != want {
+			t.Errorf("Duration(%v).String() = %q, want %q", in, got, want)
+		}
+		if back, err := ParseDuration(got); err != nil || back != in {
+			t.Errorf("ParseDuration(%q) = %v, %v; want %v", got, back, err, in)
+		}
+	}
+}

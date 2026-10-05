@@ -42,6 +42,8 @@ type Server struct {
 	// budgets are the rate budgets, shared with the Servers of later
 	// reloads.
 	budgets *budgets
+	// health reports for /healthz; the Live serving this Server sets it.
+	health func() health
 }
 
 // New builds the route table of a validated config. Secrets are read from
@@ -98,11 +100,27 @@ func newServer(c *config.Config, b *budgets) (*Server, error) {
 			return nil, fmt.Errorf("endpoint %s: %w", p, err)
 		}
 	}
+	// /healthz needs no secret and spends from no budget (SPEC.md §7);
+	// another method on it is a 405, as on any known path.
+	if err := handle(s.mux, http.MethodGet+" "+HealthRoute, s.serveHealth); err != nil {
+		return nil, err
+	}
+	if err := handle(s.mux, HealthRoute, func(w http.ResponseWriter, r *http.Request) {
+		logged(r).route = HealthRoute
+		s.reject(w, http.StatusMethodNotAllowed, "method not allowed", func(h http.Header) {
+			h.Set("Allow", "GET, HEAD")
+		})
+	}); err != nil {
+		return nil, err
+	}
 	if err := handle(s.mux, "/", s.notFound); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
+
+// Decree is the decree binary the server runs, resolved on PATH.
+func (s *Server) Decree() string { return s.decree }
 
 // resolveDecree finds the decree binary, as `decree --version` did during
 // validation.

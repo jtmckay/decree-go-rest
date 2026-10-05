@@ -60,3 +60,18 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 
 // Std returns d as a time.Duration.
 func (d Duration) Std() time.Duration { return time.Duration(d) }
+
+// String formats d in decree's format, in the largest unit that divides it
+// exactly, so decree parses it back: 2s, 5m, 1d.
+func (d Duration) String() string {
+	v := time.Duration(d)
+	for _, u := range []struct {
+		unit time.Duration
+		name string
+	}{{24 * time.Hour, "d"}, {time.Hour, "h"}, {time.Minute, "m"}} {
+		if v != 0 && v%u.unit == 0 {
+			return strconv.FormatInt(int64(v/u.unit), 10) + u.name
+		}
+	}
+	return strconv.FormatInt(int64(v/time.Second), 10) + "s"
+}

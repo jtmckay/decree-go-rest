@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ValidCheck is `decree check --format json` for a valid project.
@@ -50,6 +51,7 @@ emit)
 	echo "$n" >> "$d/emits.log"
 	if [ -s "$d/emit.sleep" ]; then sleep "$(cat "$d/emit.sleep")"; fi
 	code=$(cat "$d/emit.exit")
+	echo "emit-done $n" >> "$d/events.log"
 	if [ "$code" != 0 ]; then
 		cat "$d/emit.stderr" >&2
 		exit "$code"
@@ -58,6 +60,32 @@ emit)
 	id=$(printf '20261005T043125Z-%06x' "$n")
 	printf '{\n  "id": "%s",\n  "path": ".decree/inbox/%s.md"\n}\n' "$id" "$id"
 	exit 0
+	;;
+daemon)
+	if [ "$(cat "$d/daemon.term")" = ignore ]; then
+		trap '' TERM
+	else
+		trap 'echo "term $$ $(date +%s.%N)" >> "$d/events.log"; exit 0' TERM
+	fi
+	echo "start $$ $(date +%s.%N)" >> "$d/events.log"
+	echo "daemon $$ polling"
+	echo "daemon $$ warning" >&2
+	ticks=$(cat "$d/daemon.ticks")
+	n=0
+	while :; do
+		if [ -e "$d/daemon.exit" ]; then
+			code=$(cat "$d/daemon.exit")
+			rm -f "$d/daemon.exit"
+			echo "exit $$ $(date +%s.%N)" >> "$d/events.log"
+			exit "$code"
+		fi
+		if [ -n "$ticks" ] && [ "$n" -ge "$ticks" ]; then
+			echo "exit $$ $(date +%s.%N)" >> "$d/events.log"
+			exit 3
+		fi
+		sleep 0.05
+		n=$((n + 1))
+	done
 	;;
 esac
 echo "error: the stub does not implement $1" >&2
@@ -77,6 +105,8 @@ func New(t testing.TB) *Stub {
 	s.SetEmit(t, 0, "")
 	s.write(t, "emit.json", "")
 	s.write(t, "emit.sleep", "")
+	s.write(t, "daemon.term", "")
+	s.write(t, "daemon.ticks", "")
 	return s
 }
 
@@ -169,6 +199,95 @@ func lines(s string) []string {
 		return nil
 	}
 	return strings.Split(strings.TrimSuffix(s, "\n"), "\n")
+}
+
+// SetDaemonLife makes each `decree daemon` exit with status 3 after
+// about d; 0 means it runs until stopped.
+func (s *Stub) SetDaemonLife(t testing.TB, d time.Duration) {
+	t.Helper()
+	ticks := ""
+	if d > 0 {
+		ticks = strconv.FormatInt(int64(d/(50*time.Millisecond)), 10)
+	}
+	s.write(t, "daemon.ticks", ticks)
+}
+
+// SetDaemonIgnoreTerm makes `decree daemon` ignore SIGTERM, so only
+// SIGKILL stops it. Otherwise it records the SIGTERM and exits 0.
+func (s *Stub) SetDaemonIgnoreTerm(t testing.TB, ignore bool) {
+	t.Helper()
+	v := ""
+	if ignore {
+		v = "ignore"
+	}
+	s.write(t, "daemon.term", v)
+}
+
+// ExitDaemon makes the running `decree daemon` exit with code, within
+// about 50 ms.
+func (s *Stub) ExitDaemon(t testing.TB, code int) {
+	t.Helper()
+	tmp := filepath.Join(s.Dir, "daemon.exit.tmp")
+	if err := os.WriteFile(tmp, []byte(strconv.Itoa(code)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, filepath.Join(s.Dir, "daemon.exit")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Event is one line of the stub's event log, which orders what the
+// daemons and emits did: "start <pid> <time>" (a daemon is ready, its
+// SIGTERM handling in place), "exit <pid> <time>",
+// "term <pid> <time>" (a daemon got SIGTERM) and "emit-done <n>" (an emit
+// is about to exit).
+type Event struct {
+	Kind string
+	PID  int
+	// Time is when it happened, for the daemon's events.
+	Time time.Time
+}
+
+// Events returns the event log, in order.
+func (s *Stub) Events(t testing.TB) []Event {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(s.Dir, "events.log"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []Event
+	for _, l := range lines(string(raw)) {
+		f := strings.Fields(l)
+		if len(f) < 2 {
+			t.Fatalf("stub event %q", l)
+		}
+		e := Event{Kind: f[0]}
+		e.PID, _ = strconv.Atoi(f[1])
+		if len(f) > 2 {
+			sec, err := strconv.ParseFloat(f[2], 64)
+			if err != nil {
+				t.Fatalf("stub event %q: %v", l, err)
+			}
+			e.Time = time.Unix(0, int64(sec*1e9))
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// DaemonEvents returns the events of kind among Events.
+func (s *Stub) DaemonEvents(t testing.TB, kind string) []Event {
+	t.Helper()
+	var out []Event
+	for _, e := range s.Events(t) {
+		if e.Kind == kind {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // SetVersion sets what `decree --version` prints.
