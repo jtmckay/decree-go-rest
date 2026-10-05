@@ -41,7 +41,7 @@ client --POST /notify/backup--> decree-api --exec--> decree emit --machine notif
                               decree daemon  <---------------+  claims it, runs machine `notify`
 ```
 
-decree-api is one static Go binary (Go 1.22 or newer, for `net/http` path patterns). Its only dependency outside the standard library is `gopkg.in/yaml.v3`. It runs `decree` (0.5 or newer, found on `PATH` or at `decree:` in the config) as a child process. It never writes into `.decree/` itself.
+decree-api is one static Go binary (Go 1.22 or newer, for `net/http` path patterns). Its only dependency outside the standard library is `gopkg.in/yaml.v3`. It runs `decree` (0.5 or newer, found on `PATH` or at `decree:` in the config) as a child process. It never writes messages or runs itself; the only file it creates in `.decree/` is its lock (§5).
 
 ## 3. Configuration: `decree-api.yml`
 
