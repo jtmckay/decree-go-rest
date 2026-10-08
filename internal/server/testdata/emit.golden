@@ -1,0 +1,48 @@
+POST /notify
+  argv "emit"
+  argv "--machine"
+  argv "notify"
+  argv "--param"
+  argv "title=Untitled"
+  argv "--param"
+  argv "priority=high"
+  argv "--format"
+  argv "json"
+  stdin "hello\n"
+
+POST /notify/backup
+  argv "emit"
+  argv "--machine"
+  argv "notify"
+  argv "--param"
+  argv "title=backup"
+  argv "--param"
+  argv "priority=high"
+  argv "--format"
+  argv "json"
+  stdin "disk 3 is full\n"
+
+POST /notify/disk%203.full_x-y
+  argv "emit"
+  argv "--machine"
+  argv "notify"
+  argv "--param"
+  argv "title=disk 3.full_x-y"
+  argv "--param"
+  argv "priority=high"
+  argv "--format"
+  argv "json"
+  stdin "two\nlines\n"
+
+POST /comfy/txt2img/cat_01.png
+  argv "emit"
+  argv "--machine"
+  argv "comfy_image"
+  argv "--param"
+  argv "workflow=txt2img"
+  argv "--param"
+  argv "output_prefix=comfy/cat_01.png"
+  argv "--format"
+  argv "json"
+  stdin "{\"prompt\": \"a cat\"}\n"
+

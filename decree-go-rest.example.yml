@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=decree-go-rest.schema.json
+project: .                          # the directory that holds .decree/ (relative to this file)
+listen: 127.0.0.1:8801              # keep it on localhost behind a reverse proxy
+secret_env: DECREE_GO_REST_SECRET   # the default bearer secret, read from this environment variable
+decree: decree                      # the decree binary; a name on PATH or a path
+
+daemon:
+  enabled: true                     # supervise `decree daemon`
+  interval: 2s                      # passed as --interval
+
+limits:
+  max_body_bytes: 262144
+  rate_window: 60s
+  rate_max: 60                      # authenticated requests per window, all endpoints together
+  rate_fail_max: 10                 # rejected requests per window (bad auth, unknown path, wrong method)
+
+endpoints:
+  - path: /notify
+    message:
+      machine: notify
+      params: { title: Untitled, priority: high }
+
+  - path: /notify/{title}           # action: emit is the default
+    patterns:
+      title: '[A-Za-z0-9 _.-]{1,80}'
+    message:
+      machine: notify
+      params:
+        title: '{{title}}'
+        priority: high
+
+  - path: /comfy/{type}/{name}
+    secret_env: COMFY_SECRET        # this endpoint's own secret
+    patterns: { type: '[a-z0-9-]+', name: '[A-Za-z0-9_.-]+' }
+    body: required                  # required (default), optional or none
+    message:
+      machine: comfy_image
+      params: { workflow: '{{type}}', output_prefix: 'comfy/{{name}}' }
+
+  # Answering a run's question, such as an approval, deserves its own secret.
+  - path: /approve/{wait_id}
+    action: event                   # reply to a run waiting in a person state
+    secret_env: DECREE_GO_REST_APPROVE_SECRET
+    patterns: { wait_id: '[A-Za-z0-9._-]{1,128}' }
+    body: optional                  # the note
+    reply:
+      to: '{{wait_id}}'
+      event: approve

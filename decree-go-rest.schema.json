@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree-go-rest/main/decree-go-rest.schema.json",
+  "title": "decree-go-rest.yml",
+  "description": "The config of decree-go-rest, the HTTP front door of a decree 0.5 project (SPEC.md §3). Every key is optional except `endpoints`, each endpoint's `path`, an emit endpoint's `message.machine`, an event endpoint's `reply.to` and `reply.event`, and a resolvable secret. This schema checks the shape; `decree-go-rest -check` checks the rest: that paths do not conflict, patterns compile, placeholders are path parameters, machines and their data exist, secrets are set, and decree runs. GET /openapi.json is switched by the environment variable DECREE_GO_REST_OPENAPI, not by this file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["endpoints"],
+  "properties": {
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "default": ".",
+      "description": "The directory that holds .decree/, relative to this file."
+    },
+    "listen": {
+      "type": "string",
+      "minLength": 1,
+      "default": "127.0.0.1:8801",
+      "description": "The address to listen on, host:port. Keep it on localhost behind a TLS reverse proxy. Overridden by DECREE_GO_REST_LISTEN when that is set. Takes effect only on restart."
+    },
+    "secret_env": {
+      "$ref": "#/$defs/envName",
+      "default": "DECREE_GO_REST_SECRET",
+      "description": "The environment variable holding the default bearer secret, at least 32 characters (generate one with `openssl rand -hex 32`). Secrets never appear in this file, so it can be committed."
+    },
+    "decree": {
+      "type": "string",
+      "minLength": 1,
+      "default": "decree",
+      "description": "The decree binary (0.5 or newer): a name on PATH or a path."
+    },
+    "daemon": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The supervised `decree daemon` (SPEC.md §5). Takes effect only on restart.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Supervise `decree daemon` in the project: start it before listening, restart it with back-off when it exits, and stop it on shutdown."
+        },
+        "interval": {
+          "$ref": "#/$defs/duration",
+          "default": "2s",
+          "description": "Passed to the daemon as --interval: how often it processes the project."
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The request body cap and the two global rate budgets (SPEC.md §6).",
+      "properties": {
+        "max_body_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 262144,
+          "description": "The largest request body, in bytes. A larger one is a 413."
+        },
+        "rate_window": {
+          "$ref": "#/$defs/duration",
+          "default": "60s",
+          "description": "The length of the fixed window both rate budgets are counted in."
+        },
+        "rate_max": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 60,
+          "description": "Authenticated requests per window, all endpoints together. When spent: 429 with Retry-After."
+        },
+        "rate_fail_max": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10,
+          "description": "Rejected requests per window (bad auth, unknown path, wrong method). When spent, they get 429; authenticated requests are unaffected."
+        }
+      }
+    },
+    "endpoints": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The endpoints: each turns an authenticated POST into a decree message, written by `decree emit` (action: emit), or into a reply to a run waiting in a person state, sent by `decree event` (action: event).",
+      "items": { "$ref": "#/$defs/endpoint" }
+    }
+  },
+  "$defs": {
+    "duration": {
+      "type": "string",
+      "pattern": "^[0-9]*[1-9][0-9]*[smhd]$",
+      "description": "decree's duration format: a positive whole number and s, m, h or d.",
+      "examples": ["2s", "60s", "5m", "1d"]
+    },
+    "envName": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "description": "The name of an environment variable."
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "description": "One endpoint: POST <path> emits a message for one machine (action: emit, the default, with `message`), or replies to a run waiting in a person state (action: event, with `reply`).",
+      "if": {
+        "required": ["action"],
+        "properties": { "action": { "const": "event" } }
+      },
+      "then": {
+        "required": ["reply"],
+        "not": { "required": ["message"] }
+      },
+      "else": {
+        "required": ["message"],
+        "not": { "required": ["reply"] }
+      },
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._\\-/{}]+$",
+          "description": "`/` followed by literal segments and `{name}` segments, one full segment per parameter (`\\w+`). No `..`, no empty segments, and neither /healthz nor /openapi.json, nor a path under them: both are reserved. One trailing slash on a request is ignored.",
+          "examples": ["/notify", "/notify/{title}", "/comfy/{type}/{name}", "/approve/{wait_id}"]
+        },
+        "action": {
+          "enum": ["emit", "event"],
+          "default": "emit",
+          "description": "`emit` (the default) queues a new message with `decree emit`, and requires `message`. `event` replies to a run waiting in a person state with `decree event`, and requires `reply`. Neither takes the other's key."
+        },
+        "secret_env": {
+          "$ref": "#/$defs/envName",
+          "description": "The environment variable holding this endpoint's own secret, instead of the top-level `secret_env`. Give an endpoint that reaches a powerful machine its own."
+        },
+        "patterns": {
+          "type": "object",
+          "description": "A Go RE2 regular expression per path parameter, anchored automatically, replacing the default: `[A-Za-z0-9._-]{1,128}` for a parameter an event endpoint uses in `reply.to` (wait ids contain dots), `[A-Za-z0-9_\\-!]+` for any other. A parameter that does not fully match is a 400, never repaired.",
+          "propertyNames": { "pattern": "^\\w+$" },
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "body": {
+          "enum": ["required", "optional", "none"],
+          "description": "`required` (the default for emit): a blank body is a 400. `optional` (the default for event): an empty body is allowed. `none`: any body is a 400. An emit endpoint's body reaches decree on stdin, as the message body; an event endpoint's is the note, passed unchanged as `-m=<body>`."
+        },
+        "message": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["machine"],
+          "description": "The message an emit endpoint queues. Not allowed with action: event.",
+          "properties": {
+            "machine": {
+              "type": "string",
+              "pattern": "^[^{}]+$",
+              "description": "The decree machine, `.decree/machines/<name>.yml` in the project. Fixed: a placeholder is not allowed here."
+            },
+            "params": {
+              "type": "object",
+              "description": "Values for the machine's `data`, passed to `decree emit` as --param in the order listed. Each key must be in the machine's data and each literal match its type. A string may hold `{{name}}` placeholders for path parameters, which require string data; every path parameter must be used.",
+              "additionalProperties": {
+                "type": ["string", "integer", "boolean"]
+              }
+            }
+          }
+        },
+        "reply": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["to", "event"],
+          "description": "The reply an event endpoint sends: `decree event <to> <event> [-m=<note>] --format json`, with the body as the note. Not allowed with action: emit. Every path parameter must be used in `to` or `event`.",
+          "properties": {
+            "to": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The wait id of the run waiting in a person state, usually a placeholder such as '{{wait_id}}'.",
+              "examples": ["{{wait_id}}"]
+            },
+            "event": {
+              "type": "string",
+              "anyOf": [
+                { "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$" },
+                { "pattern": "\\{\\{\\w+\\}\\}" }
+              ],
+              "description": "The event the run takes. A literal must match decree's event-name pattern `^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$`; it may instead hold a `{{name}}` placeholder.",
+              "examples": ["approve", "reject"]
+            }
+          }
+        }
+      }
+    }
+  }
+}

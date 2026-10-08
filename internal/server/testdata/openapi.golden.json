@@ -1,0 +1,619 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "description": "The HTTP front door of a decree project: each endpoint queues a decree message, or replies to a run waiting for a person.",
+    "title": "decree-go-rest",
+    "version": "1"
+  },
+  "paths": {
+    "/approve/{wait_id}": {
+      "post": {
+        "description": "Runs `decree event {{wait_id}} approve [-m=<note>] --format json`, with the body as the note. Authenticated with its own bearer secret.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wait_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "pattern": "^(?:[A-Za-z0-9._-]{1,128})$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "The optional note, passed unchanged, of at most 262144 bytes.",
+          "required": false
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reply"
+                }
+              }
+            },
+            "description": "The reply is queued."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A parameter outside its pattern, a note that breaks the endpoint's body rule, or a note holding a NUL byte."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A missing or wrong bearer secret."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The run is not waiting, or does not accept the event."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A note larger than 262144 bytes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A rate budget is exhausted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the budget's window ends.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "decree could not queue the reply."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reply approve to a run waiting for a person"
+      }
+    },
+    "/comfy/{type}/{name}": {
+      "post": {
+        "description": "Runs `decree emit --machine comfy_image`, with the body on stdin. Authenticated with its own bearer secret.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "pattern": "^(?:[a-z0-9-]+)$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "pattern": "^(?:[A-Za-z0-9_.-]+)$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "The message body, opaque text of at most 262144 bytes; it must not be blank.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            },
+            "description": "The message is queued."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A parameter outside its pattern, a body that breaks the endpoint's body rule, or a message decree rejected."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A missing or wrong bearer secret."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A body larger than 262144 bytes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A rate budget is exhausted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the budget's window ends.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "decree could not queue the message."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Queue a message for machine comfy_image"
+      }
+    },
+    "/healthz": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "The daemon runs, or is disabled, and the config loaded."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "The daemon is enabled but not running, or the last config reload failed."
+          }
+        },
+        "security": [],
+        "summary": "The daemon's and the config's health"
+      }
+    },
+    "/notify": {
+      "post": {
+        "description": "Runs `decree emit --machine notify`, with the body on stdin. Authenticated with the default bearer secret.",
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "The message body, opaque text of at most 262144 bytes; it must not be blank.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            },
+            "description": "The message is queued."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A parameter outside its pattern, a body that breaks the endpoint's body rule, or a message decree rejected."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A missing or wrong bearer secret."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A body larger than 262144 bytes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A rate budget is exhausted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the budget's window ends.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "decree could not queue the message."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Queue a message for machine notify"
+      }
+    },
+    "/notify/{title}": {
+      "post": {
+        "description": "Runs `decree emit --machine notify`, with the body on stdin. Authenticated with the default bearer secret.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "title",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "pattern": "^(?:[A-Za-z0-9 _.-]{1,80})$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "The message body, opaque text of at most 262144 bytes; it must not be blank.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            },
+            "description": "The message is queued."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A parameter outside its pattern, a body that breaks the endpoint's body rule, or a message decree rejected."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A missing or wrong bearer secret."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A body larger than 262144 bytes."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A rate budget is exhausted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the budget's window ends.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "decree could not queue the message."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Queue a message for machine notify"
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The OpenAPI document of the loaded config."
+          }
+        },
+        "security": [],
+        "summary": "This document"
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Error": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "Health": {
+        "properties": {
+          "config": {
+            "properties": {
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "loaded_at": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "loaded_at",
+              "error"
+            ],
+            "type": "object"
+          },
+          "daemon": {
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "pid": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "restarts": {
+                "type": "integer"
+              },
+              "running": {
+                "type": "boolean"
+              },
+              "since": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "enabled",
+              "running",
+              "pid",
+              "restarts",
+              "since"
+            ],
+            "type": "object"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "daemon",
+          "config"
+        ],
+        "type": "object"
+      },
+      "Message": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The message id, also its run id once decree claims it.",
+            "type": "string"
+          },
+          "machine": {
+            "description": "The machine the message names.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The queued file, relative to the project: .decree/inbox/<id>.md.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "machine"
+        ],
+        "type": "object"
+      },
+      "Reply": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "description": "The event sent.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The reply's message id.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The queued file, relative to the project: .decree/inbox/<id>.md.",
+            "type": "string"
+          },
+          "to": {
+            "description": "The wait id of the run replied to.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "to",
+          "event"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  }
+}
