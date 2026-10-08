@@ -158,4 +158,4 @@ gofmt -l . && go vet ./... && go test -race ./...
 
 Handler tests use a stub `decree`; the end-to-end test (`TestEndToEnd`) uses the real one, and is skipped with a note when `decree` is not on `PATH`.
 
-This repository is built by decree itself: the migrations in `.decree/migrations/` implement SPEC.md one section at a time, with the `go_develop` machine. `decree process` runs the next ones; `decree status` shows what ran.
+This repository is built by decree itself: the migrations in `.decree/migrations/` implement SPEC.md one section at a time, with the `develop` machine and a Go gate (`gofmt`, `go vet`, `go test -race`). `decree process` runs the next ones; `decree status` shows what ran.

@@ -1,7 +1,15 @@
-#!/usr/bin/env bash
-# go_develop's qa: Claude fixes what the gate reported. Like implement,
-# it writes STOP instead of guessing.
-set -euo pipefail
+# The AI helper the built-in machines' scripts source: `. "$DECREE_LIB/ai.sh"`,
+# then `ai "<prompt>"` asks Claude and prints its reply.
+#
+# Another backend, such as a local model, is one more function, chosen by a
+# variable. With `attempts: [local, claude]` on a script invoke, decree runs the
+# script once per entry until one succeeds, with the entry in
+# DECREE_ATTEMPT_VALUE; add at the end of this file:
+#
+#   ai_local() { opencode run --model ollama/<model> "$1"; }
+#   case "${DECREE_ATTEMPT_VALUE:-}" in
+#     local) ai() { ai_local "$1"; } ;;
+#   esac
 
 # Ask Claude; the prompt is the only argument. Each call is a new session,
 # listed in the run's sessions.txt with its transcript, which Claude writes as
@@ -77,23 +85,3 @@ wait_for_reset() {
     $((reset_at / 3600)) $((reset_at % 3600 / 60)) $((wait / 60)) $((wait % 60)) >&2
   sleep "${wait}"
 }
-
-progress="${DECREE_RUN_DIR}/progress.md"
-stop="${DECREE_RUN_DIR}/STOP"
-stopped() {
-  [ -f "${stop}" ] || return 1
-  cat "${stop}" >&2
-  echo stop > "${DECREE_EVENT_FILE}"
-}
-stopped && exit 0
-
-prompt="Read ${DECREE_MESSAGE}. The gate (gofmt -l, go vet ./...,
-go test -race ./...) failed; its output is in
-${DECREE_RUN_DIR}/gate.log, and ${progress} notes what was done so far.
-Fix the failures, append a line to ${progress} for each fix, and run the
-gate again. If a failure needs a decision the message does not make, write
-the question to ${stop} and stop."
-echo "=== AI prompt (QA) ==="
-echo "${prompt}"
-ai "${prompt}"
-stopped || true

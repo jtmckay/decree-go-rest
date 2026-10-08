@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The gate: formatting, vet and tests (with the race detector), also kept in
-# gate.log for qa.
+# The gate: gofmt, go vet and go test -race, also kept in
+# gate.log for fix.
 set -euo pipefail
 {
   unformatted=$(gofmt -l .)
