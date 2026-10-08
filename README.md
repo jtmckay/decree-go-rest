@@ -148,7 +148,16 @@ loginctl enable-linger "$USER"   # keep it running when you are logged out
 journalctl --user -u decree-go-rest -f
 ```
 
-There is no container image: the daemon runs the project's scripts, so its environment needs every tool they use. A container is your choice, built on an image that has those tools.
+### Container
+
+The [`Dockerfile`](Dockerfile) builds decree-go-rest with the `decree` binary (tag `DECREE_TAG`, default `v0.5.0-beta.2`) on Debian slim. Mount the project at `/project`, with `decree-go-rest.yml` in it. It listens on `0.0.0.0:8801`, runs as uid 1000, and its health check is `-healthcheck`.
+
+```sh
+docker build -t decree-go-rest .
+docker run -d -p 127.0.0.1:8801:8801 -e DECREE_GO_REST_SECRET -v "$PWD:/project" decree-go-rest
+```
+
+The image has bash and CA certificates, not your scripts' tools. Either set `daemon: { enabled: false }` and let another container that has them run `decree daemon` on the same `.decree/`, so this one only queues messages, or build `FROM` this image and install what your scripts need.
 
 ## Development
 

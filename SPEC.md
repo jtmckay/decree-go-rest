@@ -260,7 +260,7 @@ decree-go-rest [-config decree-go-rest.yml] [-check] [-healthcheck]
 - **`deploy/decree-go-rest.service`:** a systemd user unit (`Restart=on-failure`, `EnvironmentFile=` for the secrets, `KillSignal=SIGTERM`, `TimeoutStopSec=40`), documenting `DECREE_GO_REST_OPENAPI`.
 - **`decree-go-rest.example.yml`:** the example config.
 - **`decree-go-rest.schema.json`:** a JSON Schema of the config, so an editor completes keys. Point a config at it with `# yaml-language-server: $schema=…`, as decree's machines do.
-- **No container image.** decree-go-rest's daemon runs the project's scripts, so its environment needs every tool those scripts use. A container is the user's choice, built on an image that has those tools.
+- **Container image.** The `Dockerfile` ships decree-go-rest and the `decree` binary only: the daemon runs the project's scripts, which need their own tools. In a container, either disable the daemon and run `decree daemon` in another container on the same `.decree/`, or build `FROM` the image with those tools.
 
 ## 12. Testing
 
