@@ -15,7 +15,9 @@ import (
 
 // Defaults of SPEC.md §3.
 const (
-	DefaultConfigPath   = "./decree-go-rest.yml"
+	DefaultConfigPath = "./decree-go-rest.yml"
+	// DefaultProject is the config's directory, or its parent when the
+	// config is in .decree/ (see Load).
 	DefaultProject      = "."
 	DefaultListen       = "127.0.0.1:8801"
 	DefaultSecretEnv    = "DECREE_GO_REST_SECRET"
@@ -36,6 +38,9 @@ const (
 	// OpenAPIEnv switches GET /openapi.json on (true) or off (false, the
 	// default). It is read at startup.
 	OpenAPIEnv = "DECREE_GO_REST_OPENAPI"
+	// DaemonEnv overrides `daemon.enabled` when set: true or false. The
+	// container image sets it to false.
+	DaemonEnv = "DECREE_GO_REST_DAEMON"
 )
 
 // Body rules of an endpoint.
@@ -196,7 +201,8 @@ func checkRemovedKeys(data []byte) error {
 
 func defaults() Config {
 	return Config{
-		Project:   DefaultProject,
+		// Empty means DefaultProject, which Load resolves.
+		Project:   "",
 		Listen:    DefaultListen,
 		SecretEnv: DefaultSecretEnv,
 		Decree:    DefaultDecree,
@@ -211,7 +217,7 @@ func defaults() Config {
 }
 
 // Load reads the config file at path and applies the defaults and the
-// DECREE_GO_REST_LISTEN override. It does not validate beyond the YAML: unknown
+// DECREE_GO_REST_LISTEN and DECREE_GO_REST_DAEMON overrides. It does not validate beyond the YAML: unknown
 // keys and malformed values are errors, everything else is Validate's job.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -229,7 +235,13 @@ func Load(path string) (*Config, error) {
 	c.File = abs
 	c.Dir = filepath.Dir(abs)
 	c.ProjectDir = c.Project
-	if !filepath.IsAbs(c.ProjectDir) {
+	switch {
+	case c.Project == "" && filepath.Base(c.Dir) == ".decree":
+		// The config lives in the project's .decree/, as in the container.
+		c.ProjectDir = filepath.Dir(c.Dir)
+	case c.Project == "":
+		c.ProjectDir = c.Dir
+	case !filepath.IsAbs(c.ProjectDir):
 		c.ProjectDir = filepath.Join(c.Dir, c.ProjectDir)
 	}
 	return c, nil
@@ -294,6 +306,13 @@ func Parse(data []byte) (*Config, error) {
 	}
 	if v, ok := os.LookupEnv(ListenEnv); ok && v != "" {
 		c.Listen = v
+	}
+	switch v := os.Getenv(DaemonEnv); v {
+	case "":
+	case "true", "false":
+		c.Daemon.Enabled = v == "true"
+	default:
+		return nil, fmt.Errorf("%s is %q; it must be true or false", DaemonEnv, v)
 	}
 	return &c, nil
 }

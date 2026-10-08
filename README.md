@@ -1,54 +1,20 @@
 # decree-go-rest
 
-decree-go-rest is the HTTP front door of a [decree](https://github.com/jtmckay/decree) 0.5 project. Endpoints defined in one YAML file turn authenticated `POST`s into decree inbox messages, always through `decree emit`, so ids, validation of the machine and its typed `params`, and trace context stay decree's. An endpoint can instead reply to a run waiting for a person, through `decree event`, such as an approval with its own secret. It keeps `decree daemon` running, so those messages are processed. It runs no work itself: decree does. The design, and the source of truth for every behaviour below, is [SPEC.md](SPEC.md).
+decree-go-rest is the HTTP front door of a [decree](https://github.com/jtmckay/decree) 0.5 project. Endpoints defined in one YAML file turn authenticated `POST`s into decree inbox messages, always through `decree emit`, so ids, validation of the machine and its typed `params`, and trace context stay decree's. An endpoint can instead reply to a run waiting for a person, through `decree event`, such as an approval with its own secret. It runs no work itself: `decree daemon` processes those messages, in a container of its own beside it, or supervised by decree-go-rest when it runs outside Docker. The design, and the source of truth for every behaviour below, is [SPEC.md](SPEC.md).
 
 ## Install
 
-Needs Go 1.22 or newer to build, and `decree` 0.5 or newer on `PATH` (or at `decree:` in the config) to run.
+decree-go-rest ships as a container image with the `decree` binary it runs:
 
 ```sh
-go install github.com/jtmckay/decree-go-rest/cmd/decree-go-rest@latest
+docker pull ghcr.io/jtmckay/decree-go-rest:latest
 ```
 
-or, from a checkout, a static binary:
-
-```sh
-CGO_ENABLED=0 go build -o decree-go-rest ./cmd/decree-go-rest
-```
-
-`decree-go-rest -version` prints the version it was built from.
+Tags: `latest` and `X.Y.Z` / `X.Y` for releases, `main` for the main branch. `linux/amd64` only for now. Running the binary outside Docker is covered under [From source](#from-source).
 
 ## Quick start
 
-A decree project with one machine, `notify`, whose script sees the request's parameters as `DECREE_DATA_*`:
-
-```sh
-mkdir hello && cd hello
-decree init
-mkdir -p .decree/scripts/notify
-cat > .decree/machines/notify.yml <<'EOF'
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
-name: notify
-description: Log a notification.
-initial: send
-data:
-  title:    { type: string, default: Untitled }
-  priority: { type: string, default: low }
-states:
-  send:   { invoke: send, transitions: { done: done } }
-  done:   { final: true }
-  failed: { final: true }
-EOF
-cat > .decree/scripts/notify/send <<'EOF'
-#!/bin/sh
-echo "notify: $DECREE_DATA_TITLE ($DECREE_DATA_PRIORITY)"
-cat "$DECREE_MESSAGE"
-EOF
-chmod +x .decree/scripts/notify/send
-decree graph && decree check
-```
-
-A config, `decree-go-rest.yml`, next to `.decree/`:
+In a [decree](https://github.com/jtmckay/decree) project with a machine `notify` (setting one up is covered there), a config in `.decree/decree-go-rest.yml`:
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/jtmckay/decree-go-rest/main/decree-go-rest.schema.json
@@ -59,26 +25,34 @@ endpoints:
       params: { title: '{{title}}', priority: high }
 ```
 
-A secret, then run it:
+From the project directory, a secret, a check, then the service. It sees `.decree/` read-only, except `inbox/`, where it queues messages:
 
 ```sh
 export DECREE_GO_REST_SECRET=$(openssl rand -hex 32)
-decree-go-rest -check     # validates the config, the machines and decree; exits 0 or 1
-decree-go-rest            # listens on 127.0.0.1:8801 and supervises `decree daemon`
+IMAGE=ghcr.io/jtmckay/decree-go-rest:latest
+MOUNTS="-v $PWD/.decree:/project/.decree:ro -v $PWD/.decree/inbox:/project/.decree/inbox"
+
+# validates the config, the machines and decree; exits 0 or 1
+docker run --rm --user "$(id -u):$(id -g)" $MOUNTS -e DECREE_GO_REST_SECRET "$IMAGE" -check
+
+# listens on 8801
+docker run -d --name decree-go-rest --restart unless-stopped --stop-timeout 15 \
+  --user "$(id -u):$(id -g)" $MOUNTS -e DECREE_GO_REST_SECRET \
+  -p 127.0.0.1:8801:8801 "$IMAGE"
 ```
 
-From another shell (with the same `DECREE_GO_REST_SECRET`):
+and `decree daemon` in the project to process what it queues, on the host or in a container ([below](#running-it-in-docker)).
+
+Then:
 
 ```sh
 curl -sS -X POST http://127.0.0.1:8801/notify/backup \
   -H "Authorization: Bearer $DECREE_GO_REST_SECRET" \
   --data-binary 'The nightly backup finished.'
 # {"id":"20261005T073848Z-734a8f","path":".decree/inbox/20261005T073848Z-734a8f.md","machine":"notify"}
-
-decree status 20261005T073848Z-734a8f   # in the project: "finished" in state done
 ```
 
-Every key of the config, with its default, is in [SPEC.md §3](SPEC.md#3-configuration-decree-go-restyml) and in [`decree-go-rest.schema.json`](decree-go-rest.schema.json); [`decree-go-rest.example.yml`](decree-go-rest.example.yml) uses most of them. The config is reloaded when it changes, without restarting the daemon ([§8](SPEC.md#8-reloading-the-config)).
+Every key of the config, with its default, is in [SPEC.md §3](SPEC.md#3-configuration-decree-go-restyml) and in [`decree-go-rest.schema.json`](decree-go-rest.schema.json); [`example/.decree/decree-go-rest.yml`](example/.decree/decree-go-rest.yml) uses most of them. The config is reloaded when it changes, without restarting the daemon ([§8](SPEC.md#8-reloading-the-config)).
 
 ## Endpoints
 
@@ -121,7 +95,7 @@ Neither path may be used by a configured endpoint.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `DECREE_GO_REST_SECRET` | | The default bearer secret, at least 32 characters. Its name is the config's `secret_env`. |
-| `DECREE_GO_REST_LISTEN` | | Overrides `listen` when set. |
+| `DECREE_GO_REST_LISTEN` | `0.0.0.0:8801` in the image | Overrides `listen` when set. |
 | `DECREE_GO_REST_OPENAPI` | `false` | `true` serves `GET /openapi.json`; `false` does not. Any other value stops decree-go-rest from starting. Read at startup. |
 
 ## Security
@@ -130,34 +104,37 @@ decree's [SECURITY.md](https://github.com/jtmckay/decree/blob/main/SECURITY.md) 
 
 - **Secrets** come only from the environment and are at least 32 characters. Generate one with `openssl rand -hex 32`. Give an endpoint that reaches a powerful machine its own `secret_env`.
 - **Approvals get their own secret.** Answering a run's question, such as an approval, deserves its own secret: give each `action: event` endpoint its own `secret_env`, as the example config's `/approve/{wait_id}` does, so a caller that may queue messages cannot also approve them.
-- **Listen on localhost** (the default). Expose the service only through a TLS reverse proxy, such as Caddy; decree-go-rest does no TLS.
+- **Listen on localhost:** publish the container's port on `127.0.0.1` (as above), or keep it on a Compose network, and expose the service only through a TLS reverse proxy, such as Caddy; decree-go-rest does no TLS.
 - **Path parameters reach decree only as `--param` values in argv:** no shell, typed by decree, and restricted by their pattern (rejected, never repaired). Bodies reach decree only on stdin.
 - **No endpoint can choose the machine:** `message.machine` is fixed in the config, and a placeholder is not allowed there.
 - **Rate budgets:** authentication comes before either budget, so unauthenticated traffic can exhaust only the failure budget and never locks out a caller holding the right secret.
 - Messages may carry secrets, so decree-go-rest runs with umask `027`, and it never passes its own `DECREE_*` variables on to decree.
 
-## Running it as a service
+## Running it in Docker
 
-[`deploy/decree-go-rest.service`](deploy/decree-go-rest.service) is a systemd user unit. Put the secrets in `~/.config/decree-go-rest/env` (mode `600`), adjust the paths in the unit, then:
+The image runs `decree-go-rest -config /project/.decree/decree-go-rest.yml`; arguments are added after it, as `-check` above. It needs the project's `.decree/` mounted at `/project/.decree`, read-only, with `inbox/` mounted read-write over it: the endpoints write nothing but the messages `decree emit` and `decree event` queue there, and with the daemon off decree-go-rest writes nothing else. It listens on `0.0.0.0:8801` inside the container, its health check is `-healthcheck`, and it logs JSON lines on stderr. Run it as the owner of the project (`--user`, uid 1000 by default), the same user as the daemon, so the daemon can claim its messages.
+
+**The daemon runs in its own container.** The image sets `DECREE_GO_REST_DAEMON=false`: `decree daemon` runs your machines' scripts, which need their own tools and the project read-write, so it does not belong in the container that takes requests. [`example/compose.yml`](example/compose.yml) runs both:
+
+- **`api`**, this image, with the mounts above, the secrets from a mode `600` `.env`, and the port on `127.0.0.1`;
+- **`daemon`**, built from [`example/daemon/Dockerfile`](example/daemon/Dockerfile): Ubuntu with decree and nothing your scripts need yet, which is yours to fill in. It mounts the whole project read-write and publishes no port.
+
+Copy `compose.yml` and `daemon/` to your project, and [`example/.decree/decree-go-rest.yml`](example/.decree/decree-go-rest.yml) into its `.decree/`.
+
+The config's directory is mounted, not the file, so editing `.decree/decree-go-rest.yml` reloads it ([SPEC.md §8](SPEC.md#8-reloading-the-config)).
+
+### Building the image
+
+`docker build -t decree-go-rest .` builds the same image from a checkout. `DECREE_TAG` picks decree's tag (default `v0.5.0-beta.4`) and `VERSION` sets what `-version` prints. [`.github/workflows/docker.yml`](.github/workflows/docker.yml) tests, then publishes on every push to `main` and every `v*` tag; tagging a release is `git tag v1.2.3 && git push origin v1.2.3`.
+
+### From source
+
+Needs Go 1.22 or newer to build, and `decree` 0.5 or newer on `PATH` (or at `decree:` in the config) to run.
 
 ```sh
-cp deploy/decree-go-rest.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now decree-go-rest
-loginctl enable-linger "$USER"   # keep it running when you are logged out
-journalctl --user -u decree-go-rest -f
+go install github.com/jtmckay/decree-go-rest/cmd/decree-go-rest@latest
+decree-go-rest -check && decree-go-rest   # from the project directory; listens on 127.0.0.1:8801
 ```
-
-### Container
-
-The [`Dockerfile`](Dockerfile) builds decree-go-rest with the `decree` binary (tag `DECREE_TAG`, default `v0.5.0-beta.2`) on Debian slim. Mount the project at `/project`, with `decree-go-rest.yml` in it. It listens on `0.0.0.0:8801`, runs as uid 1000, and its health check is `-healthcheck`.
-
-```sh
-docker build -t decree-go-rest .
-docker run -d -p 127.0.0.1:8801:8801 -e DECREE_GO_REST_SECRET -v "$PWD:/project" decree-go-rest
-```
-
-The image has bash and CA certificates, not your scripts' tools. Either set `daemon: { enabled: false }` and let another container that has them run `decree daemon` on the same `.decree/`, so this one only queues messages, or build `FROM` this image and install what your scripts need.
 
 ## Development
 

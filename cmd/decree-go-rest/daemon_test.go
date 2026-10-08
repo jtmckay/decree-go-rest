@@ -5,6 +5,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jtmckay/decree-go-rest/internal/config"
 	"github.com/jtmckay/decree-go-rest/internal/daemon"
 	"github.com/jtmckay/decree-go-rest/internal/decreetest"
 )
@@ -302,7 +305,7 @@ func TestDaemonDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	write(t, path, strings.Replace(string(raw), "  enabled: true ", "  enabled: false", 1))
+	write(t, path, strings.Replace(string(raw), "enabled: true ", "enabled: false ", 1))
 	in := serve(t, path)
 	if code, body := in.health(t); code != http.StatusOK || body["daemon"].(map[string]any)["enabled"] != false {
 		t.Errorf("healthz %d %v", code, body)
@@ -312,6 +315,28 @@ func TestDaemonDisabled(t *testing.T) {
 	}
 	if n := len(stub.DaemonEvents(t, "start")); n != 0 {
 		t.Errorf("%d daemon starts, want none", n)
+	}
+}
+
+// TestDaemonDisabledReadOnly: without the daemon, decree-go-rest takes no
+// lock and so starts on a read-only .decree/, as the container mounts it.
+func TestDaemonDisabledReadOnly(t *testing.T) {
+	path, _ := exampleProject(t)
+	t.Setenv(config.DaemonEnv, "false")
+	decreeDir := filepath.Join(filepath.Dir(path), ".decree")
+	if err := os.Chmod(decreeDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(decreeDir, 0o755) })
+	in := serve(t, path)
+	if code, body := in.health(t); code != http.StatusOK || body["daemon"].(map[string]any)["enabled"] != false {
+		t.Errorf("healthz %d %v", code, body)
+	}
+	if code := in.terminate(t, 10*time.Second); code != 0 {
+		t.Errorf("exit %d", code)
+	}
+	if _, err := os.Stat(daemon.LockFile(filepath.Dir(path))); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("lock file: %v, want none", err)
 	}
 }
 

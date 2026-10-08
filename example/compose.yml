@@ -1,0 +1,49 @@
+# decree-go-rest in front of the decree project in this directory, and the
+# `decree daemon` that processes what it queues. Copy this file and daemon/
+# to your project, and .decree/decree-go-rest.yml into its .decree/, then:
+#
+#   printf '%s=%s\n' \
+#     DECREE_GO_REST_SECRET "$(openssl rand -hex 32)" \
+#     DECREE_GO_REST_APPROVE_SECRET "$(openssl rand -hex 32)" \
+#     COMFY_SECRET "$(openssl rand -hex 32)" > .env
+#   chmod 600 .env
+#   docker compose run --rm api -check
+#   docker compose up -d
+#   docker compose logs -f
+
+services:
+  # Takes the requests. It can only queue messages: .decree/ is read-only
+  # but for inbox/, and nothing else of the project is mounted.
+  api:
+    image: ghcr.io/jtmckay/decree-go-rest:latest
+    restart: unless-stopped
+    # On SIGTERM it finishes in-flight requests, for up to 10 s.
+    stop_grace_period: 15s
+    # The owner of this directory, `id -u`:`id -g`, the same as the daemon's,
+    # so that the daemon can claim the messages this one writes.
+    user: "1000:1000"
+    volumes:
+      - ./.decree:/project/.decree:ro
+      - ./.decree/inbox:/project/.decree/inbox
+    ports:
+      # Localhost only; put a TLS reverse proxy in front of it.
+      - 127.0.0.1:8801:8801
+    # Each secret_env of .decree/decree-go-rest.yml, read from .env.
+    environment:
+      DECREE_GO_REST_SECRET: ${DECREE_GO_REST_SECRET:?set it in .env}
+      DECREE_GO_REST_APPROVE_SECRET: ${DECREE_GO_REST_APPROVE_SECRET:?set it in .env}
+      COMFY_SECRET: ${COMFY_SECRET:?set it in .env}
+      # Serve GET /openapi.json (no auth; it lists every path).
+      # DECREE_GO_REST_OPENAPI: "true"
+
+  # Runs the machines' scripts: build daemon/Dockerfile with what they need.
+  # It sees the whole project, read-write, and publishes no port.
+  daemon:
+    build: ./daemon
+    restart: unless-stopped
+    # On SIGTERM decree interrupts the running script and records it as
+    # interrupted; give it time before the SIGKILL.
+    stop_grace_period: 30s
+    user: "1000:1000"
+    volumes:
+      - .:/project

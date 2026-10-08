@@ -88,11 +88,12 @@ func write(t *testing.T, path, content string) {
 
 func exampleConfig(t *testing.T) string {
 	t.Helper()
-	raw, err := os.ReadFile("../../decree-go-rest.example.yml")
+	raw, err := os.ReadFile("../../example/.decree/decree-go-rest.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(raw)
+	// The tests supervise a stub daemon; the example leaves it to its own container.
+	return strings.Replace(string(raw), "enabled: false ", "enabled: true ", 1)
 }
 
 // newFixture validates cfg in a temp project holding the test machines,

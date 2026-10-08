@@ -46,12 +46,12 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-// exampleProject copies decree-go-rest.example.yml into a temp project that
+// exampleProject copies example/.decree/decree-go-rest.yml into a temp project that
 // holds the machines it names, puts a stub decree on PATH, sets the
 // secrets, and returns the config path and the stub.
 func exampleProject(t *testing.T) (string, *decreetest.Stub) {
 	t.Helper()
-	example, err := os.ReadFile("../../decree-go-rest.example.yml")
+	example, err := os.ReadFile("../../example/.decree/decree-go-rest.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,8 @@ func exampleProject(t *testing.T) (string, *decreetest.Stub) {
 	write(t, config.MachineFile(proj, "notify"), notifyMachine)
 	write(t, config.MachineFile(proj, "comfy_image"), comfyMachine)
 	path := filepath.Join(proj, "decree-go-rest.yml")
-	write(t, path, string(example))
+	// The tests supervise a stub daemon; the example leaves it to its own container.
+	write(t, path, strings.Replace(string(example), "enabled: false ", "enabled: true ", 1))
 	stub := decreetest.New(t)
 	stub.OnPath(t)
 	t.Setenv(config.ListenEnv, "")
@@ -67,6 +68,7 @@ func exampleProject(t *testing.T) (string, *decreetest.Stub) {
 	t.Setenv("COMFY_SECRET", strings.Repeat("b", 32))
 	t.Setenv("DECREE_GO_REST_APPROVE_SECRET", strings.Repeat("c", 40))
 	t.Setenv(config.OpenAPIEnv, "")
+	t.Setenv(config.DaemonEnv, "")
 	return path, stub
 }
 
@@ -175,18 +177,18 @@ func TestCommandLine(t *testing.T) {
 	}
 }
 
-// schemaLine is the first line of decree-go-rest.example.yml, which points
+// schemaLine is the first line of example/.decree/decree-go-rest.yml, which points
 // editors at decree-go-rest.schema.json (SPEC.md §11).
-const schemaLine = "# yaml-language-server: $schema=decree-go-rest.schema.json\n"
+const schemaLine = "# yaml-language-server: $schema=https://raw.githubusercontent.com/jtmckay/decree-go-rest/main/decree-go-rest.schema.json\n"
 
-// TestExampleMatchesSpec keeps decree-go-rest.example.yml the example of
+// TestExampleMatchesSpec keeps example/.decree/decree-go-rest.yml the example of
 // SPEC.md §3, below its $schema line.
 func TestExampleMatchesSpec(t *testing.T) {
 	spec, err := os.ReadFile("../../SPEC.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	example, err := os.ReadFile("../../decree-go-rest.example.yml")
+	example, err := os.ReadFile("../../example/.decree/decree-go-rest.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,10 +201,10 @@ func TestExampleMatchesSpec(t *testing.T) {
 	s = s[:strings.Index(s, "```")]
 	rest, ok := strings.CutPrefix(string(example), schemaLine)
 	if !ok {
-		t.Errorf("decree-go-rest.example.yml does not start with %q", schemaLine)
+		t.Errorf("example/.decree/decree-go-rest.yml does not start with %q", schemaLine)
 	}
 	if s != rest {
-		t.Errorf("decree-go-rest.example.yml differs from SPEC.md §3's example")
+		t.Errorf("example/.decree/decree-go-rest.yml differs from SPEC.md §3's example")
 	}
 }
 

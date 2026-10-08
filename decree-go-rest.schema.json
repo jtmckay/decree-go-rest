@@ -10,8 +10,7 @@
     "project": {
       "type": "string",
       "minLength": 1,
-      "default": ".",
-      "description": "The directory that holds .decree/, relative to this file."
+      "description": "The directory that holds .decree/, relative to this file. By default this file's directory, or its parent when this file is in .decree/."
     },
     "listen": {
       "type": "string",
@@ -38,7 +37,7 @@
         "enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Supervise `decree daemon` in the project: start it before listening, restart it with back-off when it exits, and stop it on shutdown."
+          "description": "Supervise `decree daemon` in the project: start it before listening, restart it with back-off when it exits, and stop it on shutdown. The environment variable DECREE_GO_REST_DAEMON overrides it; the container image sets it to false."
         },
         "interval": {
           "$ref": "#/$defs/duration",

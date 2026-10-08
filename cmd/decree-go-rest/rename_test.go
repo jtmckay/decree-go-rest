@@ -80,7 +80,7 @@ func TestNoOldName(t *testing.T) {
 
 // TestAcceptanceBuiltBinaryChecksExample is the third acceptance
 // criterion of 07: the binary `go build ./cmd/decree-go-rest` makes
-// validates decree-go-rest.example.yml with -check, in a temp project with
+// validates example/.decree/decree-go-rest.yml with -check, in a temp project with
 // a stub decree.
 func TestAcceptanceBuiltBinaryChecksExample(t *testing.T) {
 	gobin, err := exec.LookPath("go")

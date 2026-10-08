@@ -221,7 +221,7 @@ func TestReloadRestartOnlyKeys(t *testing.T) {
 	}
 	cfg := exampleConfig(t)
 	cfg = strings.Replace(cfg, "listen: 127.0.0.1:8801", "listen: 127.0.0.1:9901", 1)
-	cfg = strings.Replace(cfg, "project: .", "project: "+other, 1)
+	cfg = "project: " + other + "\n" + cfg
 	cfg = strings.Replace(cfg, "enabled: true", "enabled: false", 1)
 	cfg = strings.Replace(cfg, "interval: 2s", "interval: 5s", 1)
 	write(t, f.path, cfg+extraEndpoint)

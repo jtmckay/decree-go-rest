@@ -131,9 +131,10 @@ func loadValid(path string, stderr io.Writer) *config.Config {
 	return c
 }
 
-// runServe validates the config, takes the project's lock, starts the
-// daemon and serves until SIGTERM or SIGINT. It then finishes in-flight
-// requests, and only then stops the daemon (SPEC.md §4, §5).
+// runServe validates the config and, when the daemon is enabled, takes the
+// project's lock and starts the daemon. It serves until SIGTERM or SIGINT,
+// then finishes in-flight requests, and only then stops the daemon
+// (SPEC.md §4, §5).
 func runServe(path string, stderr io.Writer) int {
 	// Before anything can fail: nothing serves until the config is valid.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -150,14 +151,17 @@ func runServe(path string, stderr io.Writer) int {
 		return 1
 	}
 	server.SetUmask()
-	// One decree-go-rest, so one daemon, per project (SPEC.md §5). A second
-	// instance stops here, before it touches anything process-wide.
-	lock, err := daemon.Acquire(c.ProjectDir)
-	if err != nil {
-		fmt.Fprintf(stderr, "decree-go-rest: %v\n", err)
-		return 1
+	// One decree-go-rest with a daemon per project (SPEC.md §5). A second
+	// instance stops here, before it touches anything process-wide. Without
+	// the daemon it writes nothing but inbox/, so .decree/ may be read-only.
+	if c.Daemon.Enabled {
+		lock, err := daemon.Acquire(c.ProjectDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "decree-go-rest: %v\n", err)
+			return 1
+		}
+		defer lock.Unlock()
 	}
-	defer lock.Unlock()
 	// Logs are JSON lines on stderr (SPEC.md §9).
 	slog.SetDefault(slog.New(slog.NewJSONHandler(stderr, nil)))
 	srv, err := server.New(c, server.Options{OpenAPI: openapi})

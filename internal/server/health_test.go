@@ -134,7 +134,7 @@ func TestHealthDaemonDown(t *testing.T) {
 // TestHealthDaemonDisabled: with daemon.enabled false, a daemon that is
 // not running is healthy.
 func TestHealthDaemonDisabled(t *testing.T) {
-	cfg := strings.Replace(exampleConfig(t), "  enabled: true ", "  enabled: false", 1)
+	cfg := strings.Replace(exampleConfig(t), "enabled: true ", "enabled: false ", 1)
 	f := newFixture(t, cfg)
 	l := f.live(t)
 	code, _, body := getHealth(t, l, http.MethodGet, "/healthz")

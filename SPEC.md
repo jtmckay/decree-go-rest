@@ -18,7 +18,7 @@ This file is the source of truth while the service is built. The migrations in `
 
 - Endpoints are configuration, not code. Adding one means editing `decree-go-rest.yml`; there is no route table in the code.
 - **Every message is written by decree:** `decree emit`, or `decree event` for a reply, so ids, atomic writes, validation of the machine and its typed `params`, and trace context are decree's, not reimplemented.
-- **One process to run:** decree-go-rest supervises `decree daemon`.
+- **Least privilege in a container:** decree-go-rest can only queue messages, with `.decree/` read-only but for `inbox/`; `decree daemon` runs beside it, with the tools and access its scripts need. Outside a container, decree-go-rest can supervise the daemon itself, as one process to run.
 - **Safe to expose behind a TLS reverse proxy:** per-endpoint bearer secrets, request limits, rate budgets that unauthenticated traffic cannot exhaust for real callers.
 - **Standard, discoverable:** an OpenAPI 3.1 document generated from the config, JSON responses, W3C Trace Context passed through to the run.
 
@@ -48,20 +48,19 @@ decree-go-rest is one static Go binary (Go 1.22 or newer, for `net/http` path pa
 The binary reads the file named by `-config` (default `./decree-go-rest.yml`). A full example:
 
 ```yaml
-project: .                          # the directory that holds .decree/ (relative to this file)
-listen: 127.0.0.1:8801              # keep it on localhost behind a reverse proxy
-secret_env: DECREE_GO_REST_SECRET   # the default bearer secret, read from this environment variable
-decree: decree                      # the decree binary; a name on PATH or a path
+listen: 127.0.0.1:8801 # keep it on localhost behind a reverse proxy
+secret_env: DECREE_GO_REST_SECRET # the default bearer secret, read from this environment variable
+decree: decree # the decree binary; a name on PATH or a path
 
 daemon:
-  enabled: true                     # supervise `decree daemon`
-  interval: 2s                      # passed as --interval
+  enabled: false # true supervises `decree daemon`; in Docker it runs in its own container (compose.yml)
+  interval: 2s # passed as --interval
 
 limits:
   max_body_bytes: 262144
   rate_window: 60s
-  rate_max: 60                      # authenticated requests per window, all endpoints together
-  rate_fail_max: 10                 # rejected requests per window (bad auth, unknown path, wrong method)
+  rate_max: 60 # authenticated requests per window, all endpoints together
+  rate_fail_max: 10 # rejected requests per window (bad auth, unknown path, wrong method)
 
 endpoints:
   - path: /notify
@@ -69,43 +68,45 @@ endpoints:
       machine: notify
       params: { title: Untitled, priority: high }
 
-  - path: /notify/{title}           # action: emit is the default
+  - path: /notify/{title} # action: emit is the default
     patterns:
-      title: '[A-Za-z0-9 _.-]{1,80}'
+      title: "[A-Za-z0-9 _.-]{1,80}"
     message:
       machine: notify
       params:
-        title: '{{title}}'
+        title: "{{title}}"
         priority: high
 
   - path: /comfy/{type}/{name}
-    secret_env: COMFY_SECRET        # this endpoint's own secret
-    patterns: { type: '[a-z0-9-]+', name: '[A-Za-z0-9_.-]+' }
-    body: required                  # required (default), optional or none
+    secret_env: COMFY_SECRET # this endpoint's own secret
+    patterns: { type: "[a-z0-9-]+", name: "[A-Za-z0-9_.-]+" }
+    body: required # required (default), optional or none
     message:
       machine: comfy_image
-      params: { workflow: '{{type}}', output_prefix: 'comfy/{{name}}' }
+      params: { workflow: "{{type}}", output_prefix: "comfy/{{name}}" }
 
   # Answering a run's question, such as an approval, deserves its own secret.
   - path: /approve/{wait_id}
-    action: event                   # reply to a run waiting in a person state
+    action: event # reply to a run waiting in a person state
     secret_env: DECREE_GO_REST_APPROVE_SECRET
-    patterns: { wait_id: '[A-Za-z0-9._-]{1,128}' }
-    body: optional                  # the note
+    patterns: { wait_id: "[A-Za-z0-9._-]{1,128}" }
+    body: optional # the note
     reply:
-      to: '{{wait_id}}'
+      to: "{{wait_id}}"
       event: approve
 ```
+
+It is [`example/.decree/decree-go-rest.yml`](example/.decree/decree-go-rest.yml) in the repository, beside the `compose.yml` that runs it ([§11](#11-command-line-and-packaging)).
 
 **Keys.** Every key is optional except `endpoints`, an `emit` endpoint's `message.machine`, an `event` endpoint's `reply.to` and `reply.event`, and a resolvable secret. The key of the removed built-in endpoints ([§13](#13-differences-from-existentials-decree-webhook)) is not accepted: it is a config error that names the endpoint `action` form. Durations use decree's format: a whole number and `s`, `m`, `h` or `d`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `project` | `.` | Directory holding `.decree/`, relative to the config file. |
+| `project` | the config's directory, or its parent when the config is in `.decree/` | Directory holding `.decree/`, relative to the config file. |
 | `listen` | `127.0.0.1:8801` | Address to listen on. Overridden by `DECREE_GO_REST_LISTEN` if set. |
 | `secret_env` | `DECREE_GO_REST_SECRET` | Environment variable holding the default bearer secret. Secrets never appear in the file, so it can be committed. |
 | `decree` | `decree` | The decree binary. |
-| `daemon.enabled` / `daemon.interval` | `true` / `2s` | Supervise `decree daemon --interval <interval>`. |
+| `daemon.enabled` / `daemon.interval` | `true` / `2s` | Supervise `decree daemon --interval <interval>`. `DECREE_GO_REST_DAEMON` overrides `enabled` ([§11](#11-command-line-and-packaging)); the container image turns it off. |
 | `limits.*` | as above | Request body cap, and the two rate budgets ([§6](#6-limits)). |
 | `endpoints[].path` | | `/` followed by literal segments and `{name}` segments. One full segment per parameter. |
 | `endpoints[].action` | `emit` | `emit`: queue a new message with `decree emit` ([§4](#4-handling-a-request)); requires `message` and forbids `reply`. `event`: reply to a run waiting in a `person` state with `decree event`; requires `reply` and forbids `message`. |
@@ -189,6 +190,8 @@ When `daemon.enabled` is true:
 - **Restart.** If the daemon exits, decree-go-rest restarts it after a back-off (1 s, doubling to 60 s at most). The back-off resets once the daemon has run for 5 minutes. Each restart is logged with the exit status.
 - **Shutdown.** On SIGTERM or SIGINT, decree-go-rest stops accepting requests and finishes in-flight ones (up to 10 s). It then sends SIGTERM to the daemon and waits up to 15 s; decree then interrupts the running script, records `interrupted` and exits. Only after that does it send SIGKILL.
 - **One daemon only.** decree-go-rest never runs two daemons for one project. It holds an exclusive `flock` on `<project>/.decree/decree-go-rest.lock` while it runs, and a second decree-go-rest for the same project exits with an error.
+
+When it is false, decree-go-rest takes no lock and writes nothing in `.decree/` but the messages `decree emit` and `decree event` write to `inbox/`, so `.decree/` may be read-only apart from `inbox/`. Something else runs `decree daemon`; decree's own lock keeps that to one.
 - **`/healthz`** reports the daemon's state ([§7](#7-health-and-openapi)).
 
 A config change never restarts the daemon, because that would interrupt the running script and leave the run waiting for `decree process --retry`.
@@ -255,12 +258,12 @@ decree-go-rest [-config decree-go-rest.yml] [-check] [-healthcheck]
   | --- | --- | --- |
   | `DECREE_GO_REST_SECRET` | | The default bearer secret, at least 32 characters. Its name is the config's `secret_env`; each endpoint's own `secret_env` names another variable. |
   | `DECREE_GO_REST_LISTEN` | | Overrides `listen` when set and non-empty. |
+  | `DECREE_GO_REST_DAEMON` | | Overrides `daemon.enabled` when set and non-empty: `true` or `false`. Any other value is a config error. |
   | `DECREE_GO_REST_OPENAPI` | `false` | `true` serves `GET /openapi.json`; `false`, unset or empty does not. Any other value is a startup error. |
-- **Releases:** a static binary (`CGO_ENABLED=0`).
-- **`deploy/decree-go-rest.service`:** a systemd user unit (`Restart=on-failure`, `EnvironmentFile=` for the secrets, `KillSignal=SIGTERM`, `TimeoutStopSec=40`), documenting `DECREE_GO_REST_OPENAPI`.
-- **`decree-go-rest.example.yml`:** the example config.
+- **Releases:** the container image below is the supported way to run decree-go-rest. `.github/workflows/docker.yml` publishes it to `ghcr.io/jtmckay/decree-go-rest`: `X.Y.Z`, `X.Y` and `latest` for a `vX.Y.Z` tag, `main` and `sha-<commit>` for the main branch. The binary inside is static (`CGO_ENABLED=0`) and reports the tag or commit with `-version`.
+- **`example/`:** `.decree/decree-go-rest.yml`, the example config of §3, and `compose.yml`: decree-go-rest from the image, with `.decree/` read-only but for `inbox/`, and `decree daemon` in a container of its own, built from `example/daemon/Dockerfile`, with the project read-write.
 - **`decree-go-rest.schema.json`:** a JSON Schema of the config, so an editor completes keys. Point a config at it with `# yaml-language-server: $schema=…`, as decree's machines do.
-- **Container image.** The `Dockerfile` ships decree-go-rest and the `decree` binary only: the daemon runs the project's scripts, which need their own tools. In a container, either disable the daemon and run `decree daemon` in another container on the same `.decree/`, or build `FROM` the image with those tools.
+- **Container image.** The `Dockerfile` ships decree-go-rest and the `decree` binary its endpoints run. It reads `/project/.decree/decree-go-rest.yml` and sets `DECREE_GO_REST_DAEMON=false`: the daemon runs the project's scripts, which need their own tools and write access to the project, so it runs in a container of its own. Its stop grace period must cover the 10 s of in-flight requests ([§5](#5-the-daemon)); the example gives it 15 s.
 
 ## 12. Testing
 
@@ -289,8 +292,8 @@ decree-go-rest [-config decree-go-rest.yml] [-check] [-healthcheck]
 | Frontmatter built as a YAML node tree to block injection | Values passed as argv to `emit`; decree writes the YAML | The injection boundary is now decree's serializer, and there is no shell. |
 | `secret:` in the config file (rendered from a template) | `secret_env:` names an environment variable | The config can be committed; secrets live in the environment. |
 | Wrong method is a 404 (Express parity) | 405 with `Allow` | No legacy callers to keep compatible with. Both are charged to the failure budget. |
-| Exit on config change; the container restarts | Validated atomic swap; the old config is kept if the new one is invalid | decree-go-rest also supervises the daemon, and restarting it would interrupt the running script. |
-| A separate container for the daemon | decree-go-rest supervises `decree daemon` | One process to run. |
+| Exit on config change; the container restarts | Validated atomic swap; the old config is kept if the new one is invalid | No dropped requests, and when decree-go-rest supervises the daemon, restarting it would interrupt the running script. |
+| A separate container for the daemon | Still a separate container in Docker; decree-go-rest supervises `decree daemon` when `daemon.enabled` is true | The daemon's image is the project's, with its scripts' tools; the request-facing container stays minimal and can only queue messages. Outside Docker, supervising it keeps one process to run. |
 | Inbox only | Event endpoints and opt-in OpenAPI: an endpoint with `action: event` replies to a run waiting in a `person` state, and `GET /openapi.json` is served when `DECREE_GO_REST_OPENAPI=true` | 0.5's `person` replies make approvals natural over HTTP, each on its own path, secret, patterns and rate budget. This replaced built-ins (a `builtins` config with `GET /runs/{id}` and `POST /runs/{wait_id}/replies/{event}`), removed in migration 08: every endpoint is configured. |
 | No tracing | `traceparent` passed through to the run | decree 0.5 runs are OpenTelemetry traces. |
 

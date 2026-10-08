@@ -61,17 +61,17 @@ func yamlInstance(t *testing.T, src string) any {
 }
 
 // TestAcceptanceExampleMatchesSchema is the second acceptance criterion:
-// decree-go-rest.example.yml passes decree-go-rest.schema.json.
+// example/.decree/decree-go-rest.yml passes decree-go-rest.schema.json.
 func TestAcceptanceExampleMatchesSchema(t *testing.T) {
-	example, err := os.ReadFile("../../decree-go-rest.example.yml")
+	example, err := os.ReadFile("../../example/.decree/decree-go-rest.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(string(example), schemaLine) {
-		t.Errorf("decree-go-rest.example.yml does not start with %q", schemaLine)
+		t.Errorf("example/.decree/decree-go-rest.yml does not start with %q", schemaLine)
 	}
 	if err := compileSchema(t).Validate(yamlInstance(t, string(example))); err != nil {
-		t.Errorf("decree-go-rest.example.yml does not match the schema:\n%v", err)
+		t.Errorf("example/.decree/decree-go-rest.yml does not match the schema:\n%v", err)
 	}
 }
 

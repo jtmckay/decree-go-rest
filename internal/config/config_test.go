@@ -20,6 +20,7 @@ func writeFile(t *testing.T, path, content string) {
 
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv(ListenEnv, "")
+	t.Setenv(DaemonEnv, "")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "decree-go-rest.yml")
 	writeFile(t, path, "endpoints:\n  - path: /notify\n    message: { machine: notify }\n")
@@ -31,7 +32,7 @@ func TestLoadDefaults(t *testing.T) {
 		name      string
 		got, want any
 	}{
-		{"project", c.Project, "."},
+		{"project", c.Project, ""},
 		{"project dir", c.ProjectDir, dir},
 		{"listen", c.Listen, "127.0.0.1:8801"},
 		{"secret_env", c.SecretEnv, "DECREE_GO_REST_SECRET"},
@@ -145,6 +146,53 @@ func TestEventEndpointDefaults(t *testing.T) {
 		if ch.got != ch.want {
 			t.Errorf("%s = %v, want %v", ch.name, ch.got, ch.want)
 		}
+	}
+}
+
+// TestLoadInDecreeDir: with no project, a config in .decree/ belongs to
+// the directory above it, as in the container image.
+func TestLoadInDecreeDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".decree", "decree-go-rest.yml")
+	writeFile(t, path, "endpoints: []\n")
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ProjectDir != dir {
+		t.Errorf("project dir = %s, want %s", c.ProjectDir, dir)
+	}
+	writeFile(t, path, "project: .\nendpoints: []\n")
+	if c, err = Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, ".decree"); c.ProjectDir != want {
+		t.Errorf("with project: ., project dir = %s, want %s", c.ProjectDir, want)
+	}
+}
+
+func TestDaemonEnvOverride(t *testing.T) {
+	for _, tc := range []struct {
+		env, config string
+		want        bool
+	}{
+		{"", "true", true},
+		{"", "false", false},
+		{"false", "true", false},
+		{"true", "false", true},
+	} {
+		t.Setenv(DaemonEnv, tc.env)
+		c, err := Parse([]byte("daemon: { enabled: " + tc.config + " }\nendpoints: []\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Daemon.Enabled != tc.want {
+			t.Errorf("%s=%q, enabled: %s: enabled = %v, want %v", DaemonEnv, tc.env, tc.config, c.Daemon.Enabled, tc.want)
+		}
+	}
+	t.Setenv(DaemonEnv, "no")
+	if _, err := Parse([]byte("endpoints: []\n")); err == nil || !strings.Contains(err.Error(), DaemonEnv) {
+		t.Errorf("%s=no: err = %v, want one naming %s", DaemonEnv, err, DaemonEnv)
 	}
 }
 
