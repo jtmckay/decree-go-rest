@@ -125,7 +125,7 @@ The config's directory is mounted, not the file, so editing `.decree/decree-go-r
 
 ### Building the image
 
-`docker build -t decree-go-rest .` builds the same image from a checkout. `DECREE_TAG` picks decree's tag (default `v0.5.0-beta.4`) and `VERSION` sets what `-version` prints. [`.github/workflows/docker.yml`](.github/workflows/docker.yml) tests, then publishes on every push to `main` and every `v*` tag; tagging a release is `git tag v1.2.3 && git push origin v1.2.3`.
+`docker build -t decree-go-rest .` builds the same image from a checkout. `DECREE_TAG` picks decree's tag (default `v0.5.0-beta.5`) and `VERSION` sets what `-version` prints. [`.github/workflows/docker.yml`](.github/workflows/docker.yml) tests, then publishes on every push to `main` and every `v*` tag; tagging a release is `git tag v1.2.3 && git push origin v1.2.3`.
 
 ### From source
 

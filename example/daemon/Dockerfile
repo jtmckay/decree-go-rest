@@ -2,7 +2,7 @@
 # The daemon runs your machines' scripts, so this image is yours to fill in
 # with whatever they need; this one has only bash, git and CA certificates.
 
-ARG DECREE_TAG=v0.5.0-beta.4
+ARG DECREE_TAG=v0.5.0-beta.5
 
 FROM rust:1-slim-bookworm AS decree
 ARG DECREE_TAG
