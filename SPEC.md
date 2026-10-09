@@ -267,7 +267,7 @@ decree-go-rest [-config decree-go-rest.yml] [-check] [-healthcheck]
 
 ## 12. Testing
 
-- **Stub `decree`.** Unit and handler tests (`httptest`) use a stub `decree` executable written into a temp directory. It records its argv, working directory, environment and stdin, and answers as the real one does for `emit`, `event`, `check`, `--version` and `daemon`. Each response follows decree's `--format json` schemas, in decree's `.decree/schema/v1/cli/`.
+- **Stub `decree`.** Unit and handler tests (`httptest`) use a stub `decree` executable written into a temp directory. It records its argv, working directory, environment and stdin, and answers as the real one does for `emit`, `event`, `check`, `--version` and `daemon`. Each response follows decree's `--format json` schemas, in decree's `schema/v1/cli/`.
 - **Golden tests** for the exact `decree emit` argv and stdin per endpoint, and for the OpenAPI document. Tests of the exact `decree event` argv, with and without a note.
 - **Properties of the old service, kept as tests:**
   - authentication before budgets;
