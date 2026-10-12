@@ -10,9 +10,9 @@
 # container of its own (example/compose.yml).
 #
 #   docker build -t decree-go-rest .
-#   docker build --build-arg DECREE_TAG=v0.5.0-beta.5 --build-arg VERSION=v1.0.0 -t decree-go-rest .
+#   docker build --build-arg DECREE_TAG=v0.5.0-beta.6 --build-arg VERSION=v1.0.0 -t decree-go-rest .
 
-ARG DECREE_TAG=v0.5.0-beta.5
+ARG DECREE_TAG=v0.5.0-beta.6
 
 FROM rust:1-slim-bookworm AS decree
 ARG DECREE_TAG
