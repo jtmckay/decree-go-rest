@@ -169,9 +169,11 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("/healthz daemon = %v, want running with a pid", d)
 	}
 
-	// One POST.
+	// One POST, whose body opens with frontmatter: it stays body, and sets no
+	// params (colour keeps its default).
 	base := "http://" + in.addr
-	resp := do(t, "POST", base+"/echo/hello-world", secret, "Say hello.")
+	const sent = "---\nparams: { colour: red }\n---\nSay hello.\n"
+	resp := do(t, "POST", base+"/echo/hello-world", secret, sent)
 	var queued struct{ ID, Path, Machine string }
 	decodeJSON(t, resp, http.StatusCreated, &queued)
 	if queued.ID == "" || queued.Machine != "echo_params" {
@@ -197,7 +199,7 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(msg), "Say hello.\n") {
+	if !strings.HasSuffix(string(msg), "\n---\n"+sent) {
 		t.Errorf("the run's message lacks the body:\n%s", msg)
 	}
 
@@ -221,8 +223,17 @@ func TestEndToEnd(t *testing.T) {
 	if !strings.HasPrefix(waitID, started.ID+".") {
 		t.Fatalf("wait id %q is not of run %s", waitID, started.ID)
 	}
-	if st := runStatus(t, decree, proj, started.ID); st == nil || st.Status != "waiting" {
-		t.Fatalf("run %s: %+v, want waiting", started.ID, st)
+	// The ask script writes the wait id before it exits; decree records the
+	// wait once it has.
+	for {
+		st := runStatus(t, decree, proj, started.ID)
+		if st != nil && st.Status == "waiting" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run %s: %+v, want waiting", started.ID, st)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	// The top-level secret cannot approve it; the event endpoint's own can,

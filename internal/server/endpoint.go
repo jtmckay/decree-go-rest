@@ -124,6 +124,9 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *endpoi
 	if len(body) > 0 && body[len(body)-1] != '\n' {
 		body = append(body, '\n')
 	}
+	// decree emit reads frontmatter that opens stdin; an empty block first
+	// keeps the body opaque, so only the config sets the message's keys.
+	body = append([]byte(emptyFrontmatter), body...)
 	args := []string{"emit", "--machine", e.machine}
 	for _, p := range e.message {
 		v := p.text

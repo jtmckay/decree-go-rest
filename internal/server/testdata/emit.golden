@@ -8,7 +8,7 @@ POST /notify
   argv "priority=high"
   argv "--format"
   argv "json"
-  stdin "hello\n"
+  stdin "---\n---\nhello\n"
 
 POST /notify/backup
   argv "emit"
@@ -20,7 +20,7 @@ POST /notify/backup
   argv "priority=high"
   argv "--format"
   argv "json"
-  stdin "disk 3 is full\n"
+  stdin "---\n---\ndisk 3 is full\n"
 
 POST /notify/disk%203.full_x-y
   argv "emit"
@@ -32,7 +32,7 @@ POST /notify/disk%203.full_x-y
   argv "priority=high"
   argv "--format"
   argv "json"
-  stdin "two\nlines\n"
+  stdin "---\n---\ntwo\nlines\n"
 
 POST /comfy/txt2img/cat_01.png
   argv "emit"
@@ -44,5 +44,5 @@ POST /comfy/txt2img/cat_01.png
   argv "output_prefix=comfy/cat_01.png"
   argv "--format"
   argv "json"
-  stdin "{\"prompt\": \"a cat\"}\n"
+  stdin "---\n---\n{\"prompt\": \"a cat\"}\n"
 

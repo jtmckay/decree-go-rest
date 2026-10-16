@@ -10,17 +10,15 @@
 # container of its own (example/compose.yml).
 #
 #   docker build -t decree-go-rest .
-#   docker build --build-arg DECREE_TAG=v0.5.0-beta.6 --build-arg VERSION=v1.0.0 -t decree-go-rest .
+#   docker build --build-arg DECREE_TAG=v0.5.0-beta.13 --build-arg VERSION=v1.0.0 -t decree-go-rest .
 
-ARG DECREE_TAG=v0.5.0-beta.6
-
-FROM rust:1-slim-bookworm AS decree
-ARG DECREE_TAG
-# --locked builds against decree's own Cargo.lock, so a tag builds the same binary every time.
-RUN cargo install --locked --git https://github.com/jtmckay/decree --tag "${DECREE_TAG}" \
-    && strip /usr/local/cargo/bin/decree
+ARG DECREE_TAG=v0.5.0-beta.13
 
 FROM golang:1.22-bookworm AS build
+ARG DECREE_TAG
+# The release's own install.sh fetches its static Linux x86-64 binary and checks its sha256.
+RUN curl -fsSL -o /tmp/install.sh "https://github.com/jtmckay/decree/releases/download/${DECREE_TAG}/install.sh" \
+    && XDG_BIN_HOME=/out sh /tmp/install.sh "${DECREE_TAG}"
 # The version `decree-go-rest -version` prints; CI passes the git tag or commit.
 ARG VERSION=devel
 WORKDIR /src
@@ -37,7 +35,7 @@ LABEL org.opencontainers.image.source="https://github.com/jtmckay/decree-go-rest
 RUN apt-get update \
     && apt-get install -y --no-install-recommends bash ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=decree /usr/local/cargo/bin/decree /usr/local/bin/decree
+COPY --from=build /out/decree /usr/local/bin/decree
 COPY --from=build /out/decree-go-rest /usr/local/bin/decree-go-rest
 WORKDIR /project
 # Inside a container, listen on every interface; publish the port, or keep it on the

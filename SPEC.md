@@ -150,7 +150,7 @@ The order is fixed. It is what makes the rate budgets fair ([§6](#6-limits)).
    ```
 
    - **Working directory:** the project root.
-   - **Stdin:** the body.
+   - **Stdin:** an empty frontmatter block (`---\n---\n`), then the body. `decree emit` reads frontmatter that opens stdin, so without it a body starting with `---` could set the message's keys (its `params`, `traceparent`) or fail as bad YAML. Only the config sets frontmatter; the body is always the body.
    - **Params:** each takes its value with placeholders substituted, in the order the config lists them.
    - **Environment:** the service's, minus every `DECREE_*` variable, so a decree-go-rest started from a decree script cannot pass a run's identity on. `TRACEPARENT` and `TRACESTATE` are set from the request's `traceparent` and `tracestate` headers when they are valid W3C Trace Context, and removed otherwise, so the run joins the caller's trace.
    - **Mode:** the service runs with umask `027`, so messages, which may carry secrets, are not world-readable.

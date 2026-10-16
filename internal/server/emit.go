@@ -15,6 +15,9 @@ import (
 // DefaultEmitTimeout bounds each `decree emit` (SPEC.md §4 step 6).
 const DefaultEmitTimeout = 10 * time.Second
 
+// emptyFrontmatter opens every emit's stdin (SPEC.md §4 step 6).
+const emptyFrontmatter = "---\n---\n"
+
 // queueFailed is the body of every 500 from emit; the details are logged.
 const queueFailed = "could not queue the message"
 

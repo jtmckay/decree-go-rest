@@ -193,8 +193,8 @@ func TestAcceptanceNotifyBackup(t *testing.T) {
 	if e.Dir != f.proj {
 		t.Errorf("cwd %q, want the project %q", e.Dir, f.proj)
 	}
-	if string(e.Stdin) != "disk 3 is full\n" {
-		t.Errorf("stdin %q, want %q", e.Stdin, "disk 3 is full\n")
+	if want := "---\n---\ndisk 3 is full\n"; string(e.Stdin) != want {
+		t.Errorf("stdin %q, want %q", e.Stdin, want)
 	}
 	var got map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
@@ -272,8 +272,8 @@ endpoints:
 	if got := strings.Join(e.Args, " "); got != want {
 		t.Errorf("argv %q, want %q", got, want)
 	}
-	if len(e.Stdin) != 0 {
-		t.Errorf("stdin %q, want empty", e.Stdin)
+	if string(e.Stdin) != emptyFrontmatter {
+		t.Errorf("stdin %q, want only the empty frontmatter", e.Stdin)
 	}
 }
 

@@ -58,7 +58,7 @@ Every key of the config, with its default, is in [SPEC.md §3](SPEC.md#3-configu
 
 Every configured endpoint is a `POST` with `Authorization: Bearer <secret>`, and has an `action` ([SPEC.md §3](SPEC.md#3-configuration-decree-go-restyml)):
 
-- **`emit`** (the default) queues a new message. The body is opaque text, given to `decree emit` on stdin; it answers 201 with `{"id", "path", "machine"}`, and 400 when decree rejects the message (with decree's message).
+- **`emit`** (the default) queues a new message. The body is opaque text, given to `decree emit` on stdin after an empty frontmatter block, so a body that starts with `---` is still body and only the config sets the message's frontmatter; it answers 201 with `{"id", "path", "machine"}`, and 400 when decree rejects the message (with decree's message).
 - **`event`** replies to a run waiting in a `person` state, with `decree event <to> <event> [-m=<body>] --format json`. The body is the optional note, passed unchanged as one argv entry. It answers 201 with `{"id", "path", "to", "event"}`, and 409 when the run is not waiting, or does not accept the event.
 
 ```yaml
@@ -125,7 +125,7 @@ The config's directory is mounted, not the file, so editing `.decree/decree-go-r
 
 ### Building the image
 
-`docker build -t decree-go-rest .` builds the same image from a checkout. `DECREE_TAG` picks decree's tag (default `v0.5.0-beta.6`) and `VERSION` sets what `-version` prints. [`.github/workflows/docker.yml`](.github/workflows/docker.yml) tests, then publishes on every push to `main` and every `v*` tag; tagging a release is `git tag v1.2.3 && git push origin v1.2.3`.
+`docker build -t decree-go-rest .` builds the same image from a checkout. `DECREE_TAG` picks the decree release whose `install.sh` and binary the image installs (default `v0.5.0-beta.13`) and `VERSION` sets what `-version` prints. [`.github/workflows/docker.yml`](.github/workflows/docker.yml) tests, then publishes on every push to `main` and every `v*` tag; tagging a release is `git tag v1.2.3 && git push origin v1.2.3`.
 
 ### From source
 
