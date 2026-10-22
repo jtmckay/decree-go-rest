@@ -2,7 +2,7 @@
 # The daemon runs your machines' scripts, so this image is yours to fill in
 # with whatever they need; this one has only bash, curl, git and CA certificates.
 
-ARG DECREE_TAG=v0.5.0-beta.13
+ARG DECREE_TAG=v0.5.0
 
 FROM ubuntu:24.04
 ARG DECREE_TAG
