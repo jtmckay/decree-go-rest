@@ -4,6 +4,8 @@
 #     v1.3.0-rc.1 pushes only its own tag);
 #   - a push to main pushes main and sha-<commit>;
 #   - a pull request builds the image without pushing it.
+# A tag then gets a GitHub release of the same name, with notes generated
+# from the commits since the previous tag (a pre-release for a pre-release).
 name: docker
 
 on:
@@ -61,3 +63,16 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+
+  release:
+    needs: image
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - run: |
+          case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; *) pre= ;; esac
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes $pre
+        env:
+          GH_TOKEN: ${{ github.token }}
