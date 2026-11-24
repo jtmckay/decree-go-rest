@@ -101,8 +101,8 @@ func TestAcceptanceBuiltBinaryChecksExample(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("decree-go-rest -check: %v\nstdout %q\nstderr %q", err, stdout.String(), stderr.String())
 	}
-	if got := stdout.String(); got != "config ok: 4 endpoints\n" {
-		t.Errorf("stdout %q, want \"config ok: 4 endpoints\\n\"", got)
+	if got := stdout.String(); got != "config ok: 5 endpoints\n" {
+		t.Errorf("stdout %q, want \"config ok: 5 endpoints\\n\"", got)
 	}
 	if calls := stub.Calls(t); len(calls) != 2 {
 		t.Errorf("decree calls = %q, want --version and check", calls)

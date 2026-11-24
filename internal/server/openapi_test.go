@@ -67,6 +67,7 @@ func TestOpenAPIShape(t *testing.T) {
 		{"/notify/{title}", "post", map[string]string{"title": "^(?:[A-Za-z0-9 _.-]{1,80})$"}, true, "required"},
 		{"/comfy/{type}/{name}", "post", map[string]string{"type": "^(?:[a-z0-9-]+)$", "name": "^(?:[A-Za-z0-9_.-]+)$"}, true, "required"},
 		{"/approve/{wait_id}", "post", map[string]string{"wait_id": "^(?:[A-Za-z0-9._-]{1,128})$"}, true, "optional"},
+		{"/leases/by-id/{id}", "get", map[string]string{"id": "^(?:[0-9TZ.-]+-[a-f0-9]{6})$"}, true, ""},
 		{"/openapi.json", "get", map[string]string{}, false, ""},
 		{"/healthz", "get", map[string]string{}, false, ""},
 	}
@@ -80,7 +81,9 @@ func TestOpenAPIShape(t *testing.T) {
 			continue
 		}
 		o, ok := item[w.method].(map[string]any)
-		if !ok || len(item) != 1 {
+		// A read endpoint has head beside get.
+		read := w.method == "get" && w.auth
+		if !ok || (!read && len(item) != 1) || (read && (len(item) != 2 || item["head"] == nil)) {
 			t.Errorf("%s: operations %v, want only %s", w.path, item, w.method)
 			continue
 		}

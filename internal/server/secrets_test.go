@@ -24,9 +24,14 @@ func withDefaultSecrets(t *testing.T) string {
 // its own a 201, and its own opens no other endpoint.
 func TestAcceptanceApproveOwnSecret(t *testing.T) {
 	f := newFixture(t, exampleConfig(t))
-	ep := f.cfg.Endpoints[len(f.cfg.Endpoints)-1]
+	var ep config.Endpoint
+	for _, e := range f.cfg.Endpoints {
+		if e.Path == "/approve/{wait_id}" {
+			ep = e
+		}
+	}
 	if ep.Path != "/approve/{wait_id}" || ep.Action != config.ActionReply || ep.SecretEnv != "DECREE_GO_REST_APPROVE_SECRET" {
-		t.Fatalf("the example's last endpoint is %+v", ep)
+		t.Fatalf("the example's reply endpoint is %+v", ep)
 	}
 	rec := f.do(t, req{path: "/approve/r.w3", bearer: secret, body: "ok"})
 	if rec.Code != http.StatusUnauthorized {

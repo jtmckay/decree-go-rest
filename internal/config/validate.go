@@ -145,6 +145,9 @@ func (v *validator) config() {
 		v.add("", RuleConfig, "limits.rate_fail_max: must be positive")
 	}
 	for _, e := range c.Endpoints {
+		if e.Action == ActionRead {
+			continue // a read endpoint takes no body: readEndpoint reports one
+		}
 		switch e.Body {
 		case BodyRequired, BodyOptional, BodyNone:
 		default:
@@ -174,26 +177,47 @@ func (v *validator) paths() {
 			continue
 		}
 		seen[p] = true
-		if err := reservedConflict(p); err != nil {
-			v.add(p, RulePath, "conflicts with a reserved path: %v", err)
-			continue
-		}
-		if err := register(mux, "POST "+p); err != nil {
-			v.add(p, RulePath, "conflicts with another endpoint: %v", err)
+		for _, pattern := range e.Routes() {
+			if err := reservedConflict(pattern); err != nil {
+				v.add(p, RulePath, "conflicts with a reserved path: %v", err)
+				break
+			}
+			if err := register(mux, pattern); err != nil {
+				v.add(p, RulePath, "conflicts with another endpoint: %v", err)
+				break
+			}
 		}
 	}
 }
 
-// reservedConflict reports whether POST p conflicts, as a net/http
+// RestParam is the wildcard of the pattern that serves what lies below a
+// read endpoint without path parameters: <path>/{rest...}.
+const RestParam = "rest"
+
+// Routes are the net/http patterns that serve the endpoint: POST <path>
+// for emit and reply; GET <path> for read, and GET <path>/{rest...} too
+// when the path has no parameters. It assumes the path passed step 1.
+func (e Endpoint) Routes() []string {
+	if e.Action != ActionRead {
+		return []string{http.MethodPost + " " + e.Path}
+	}
+	out := []string{http.MethodGet + " " + e.Path}
+	if len(PathParams(e.Path)) == 0 {
+		out = append(out, http.MethodGet+" "+e.Path+"/{"+RestParam+"...}")
+	}
+	return out
+}
+
+// reservedConflict reports whether pattern conflicts, as a net/http
 // pattern, with a reserved route.
-func reservedConflict(p string) error {
+func reservedConflict(pattern string) error {
 	mux := http.NewServeMux()
 	for _, rt := range reservedRoutes {
 		if err := register(mux, rt); err != nil {
 			return err
 		}
 	}
-	return register(mux, "POST "+p)
+	return register(mux, pattern)
 }
 
 // pathShape checks one path's shape and reports every problem with it.
@@ -302,10 +326,12 @@ func (v *validator) endpoint(e Endpoint) {
 		v.emitEndpoint(e, params)
 	case ActionReply:
 		v.replyEndpoint(e, params)
+	case ActionRead:
+		v.readEndpoint(e, params)
 	case "event":
 		v.add(e.Path, RuleConfig, "action: event is now action: reply, which runs decree reply; use action: reply")
 	default:
-		v.add(e.Path, RuleConfig, "action: %q is not emit or reply", e.Action)
+		v.add(e.Path, RuleConfig, "action: %q is not emit, reply or read", e.Action)
 	}
 }
 
@@ -340,6 +366,63 @@ func (v *validator) replyEndpoint(e Endpoint, params map[string]bool) {
 			v.add(e.Path, RulePlaceholders, "parameter {%s} is not used in reply", name)
 		}
 	}
+}
+
+// segmentRE is the shape of one segment of read.path and of a path asked
+// of a read endpoint; a segment must not start with a dot either.
+var segmentRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// ValidSegment reports whether s is a segment a read endpoint serves: it
+// matches [A-Za-z0-9._-]+ and does not start with a dot, so it is never
+// . or .. and never names a hidden file.
+func ValidSegment(s string) bool {
+	return segmentRE.MatchString(s) && !strings.HasPrefix(s, ".")
+}
+
+// readEndpoint checks a read endpoint: its shape, read.machine (step 4)
+// and the placeholders of read.path (step 3). read.path need not exist,
+// since state is written over time.
+func (v *validator) readEndpoint(e Endpoint, params map[string]bool) {
+	if e.Message != nil {
+		v.add(e.Path, RuleConfig, "message is not allowed with action: read, which serves files and queues nothing")
+	}
+	if e.Reply != nil {
+		v.add(e.Path, RuleConfig, "reply is not allowed with action: read, which serves files and replies to nothing")
+	}
+	if e.Body != "" {
+		v.add(e.Path, RuleConfig, "body is not allowed with action: read, which answers GET and HEAD")
+	}
+	if e.Read == nil {
+		v.add(e.Path, RuleMachine, "action: read requires read: { machine, path }")
+		return
+	}
+
+	// Step 3: placeholders, and the shape of read.path.
+	used := map[string]bool{}
+	if p := e.Read.Path; p != "" {
+		if strings.HasPrefix(p, "/") {
+			v.add(e.Path, RuleConfig, "read.path %q must be relative to the machine's state/ folder", p)
+		}
+		for _, seg := range strings.Split(strings.TrimPrefix(p, "/"), "/") {
+			for _, m := range placeholderRE.FindAllStringSubmatch(seg, -1) {
+				if !params[m[1]] {
+					v.add(e.Path, RulePlaceholders, "read.path: {{%s}} is not a parameter of the path", m[1])
+				}
+				used[m[1]] = true
+			}
+			if !ValidSegment(placeholderRE.ReplaceAllString(seg, "x")) {
+				v.add(e.Path, RuleConfig, "read.path segment %q must match %s and not start with a dot", seg, segmentRE)
+			}
+		}
+	}
+	for _, name := range PathParams(e.Path) {
+		if !used[name] {
+			v.add(e.Path, RulePlaceholders, "parameter {%s} is not used in read.path", name)
+		}
+	}
+
+	// Step 4: machine. Its data does not matter: nothing is emitted.
+	v.machine(e.Path, "read.machine", e.Read.Machine)
 }
 
 // emitEndpoint runs steps 3–5 for an emit endpoint.
@@ -379,7 +462,7 @@ func (v *validator) emitEndpoint(e Endpoint, params map[string]bool) {
 	}
 
 	// Step 4: machine.
-	md := v.machine(e)
+	md := v.machine(e.Path, "message.machine", e.Message.Machine)
 	if md == nil {
 		return
 	}
@@ -406,32 +489,28 @@ func (v *validator) emitEndpoint(e Endpoint, params map[string]bool) {
 	}
 }
 
-// machine is step 4. It returns the machine's data, or nil when the
-// machine is missing or unreadable (and reports why).
-func (v *validator) machine(e Endpoint) *machineData {
-	name := e.Message.Machine
+// machine is step 4 for the machine an endpoint names under key. It
+// returns the machine's data, or nil when the machine is missing or
+// unreadable (and reports why).
+func (v *validator) machine(path, key, name string) *machineData {
 	switch {
 	case name == "":
-		v.add(e.Path, RuleMachine, "message.machine is required")
+		v.add(path, RuleMachine, "%s is required", key)
 		return nil
 	case strings.Contains(name, "{{"):
-		v.add(e.Path, RuleMachine, "message.machine %q: a placeholder is not allowed in the machine", name)
+		v.add(path, RuleMachine, "%s %q: a placeholder is not allowed in the machine", key, name)
 		return nil
 	case strings.ContainsAny(name, `/\`) || strings.HasPrefix(name, "."):
-		v.add(e.Path, RuleMachine, "message.machine %q is not a machine name", name)
+		v.add(path, RuleMachine, "%s %q is not a machine name", key, name)
 		return nil
 	}
-	if md, ok := v.machines[name]; ok {
-		if md.err != "" {
-			v.add(e.Path, md.rule, "%s", md.err)
-			return nil
-		}
-		return md
+	md, ok := v.machines[name]
+	if !ok {
+		md = loadMachine(v.c.ProjectDir, name)
+		v.machines[name] = md
 	}
-	md := loadMachine(v.c.ProjectDir, name)
-	v.machines[name] = md
 	if md.err != "" {
-		v.add(e.Path, md.rule, "%s", md.err)
+		v.add(path, md.rule, "%s", md.err)
 		return nil
 	}
 	return md

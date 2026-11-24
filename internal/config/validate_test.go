@@ -233,7 +233,7 @@ func TestValidateRules(t *testing.T) {
 		// forbidden keys.
 		{name: "action: emit explicit", body: "endpoints:\n  - path: /notify\n    action: emit\n    message: { machine: notify }\n"},
 		{name: "action: unknown", body: "endpoints:\n  - path: /notify\n    action: answer\n    message: { machine: notify }\n",
-			want: []want{{"/notify", config.RuleConfig, `action: "answer" is not emit or reply`}}},
+			want: []want{{"/notify", config.RuleConfig, `action: "answer" is not emit, reply or read`}}},
 		{name: "action: event names action: reply", body: "endpoints:\n  - path: /approve/{w}\n    action: event\n    reply: { to: '{{w}}', event: approve }\n",
 			want: []want{{"/approve/{w}", config.RuleConfig, "action: event is now action: reply"}}},
 		{name: "action: emit without message", body: "endpoints:\n  - path: /notify\n",

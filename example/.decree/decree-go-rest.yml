@@ -45,3 +45,13 @@ endpoints:
     reply:
       to: "{{wait_id}}"
       event: approve
+
+  # A lease's status, read-only, from the gpu_lease machine's state/ folder.
+  # Nothing outside .decree/machines/gpu_lease/state/ is reachable.
+  - path: /leases/by-id/{id}
+    action: read # GET and HEAD; never runs decree
+    secret_env: DECREE_GO_REST_READ_SECRET # state/ holds anything the machine writes
+    patterns: { id: "[0-9TZ.-]+-[a-f0-9]{6}" }
+    read:
+      machine: gpu_lease
+      path: "status/leases/{{id}}.json" # under .decree/machines/gpu_lease/state/

@@ -4,6 +4,7 @@ decree-go-rest is the HTTP front door of a [decree](https://github.com/jtmckay/d
 
 - endpoints, defined in one YAML file, turn authenticated `POST`s into decree inbox messages;
 - an endpoint can instead reply to a run waiting in a `reply` state, such as for an approval, through `decree reply`;
+- an endpoint can serve files from one machine's `state/` folder over `GET`, read-only ([§14](#14-reading-a-machines-state));
 - it keeps `decree daemon` running, so those messages are processed.
 
 It runs no work itself. decree runs the work.
@@ -18,7 +19,7 @@ This file is the source of truth while the service is built. The `develop` machi
 
 - Endpoints are configuration, not code. Adding one means editing `decree-go-rest.yml`; there is no route table in the code.
 - **Every message is written by decree:** `decree emit`, or `decree reply` for a reply, so ids, atomic writes, validation of the machine and its typed `params`, and trace context are decree's, not reimplemented.
-- **Least privilege in a container:** decree-go-rest can only queue messages, with `.decree/` read-only but for `inbox/`; `decree daemon` runs beside it, with the tools and access its scripts need. Outside a container, decree-go-rest can supervise the daemon itself, as one process to run.
+- **Least privilege in a container:** decree-go-rest can only queue messages and read what a `read` endpoint serves, with `.decree/` read-only but for `inbox/`; `decree daemon` runs beside it, with the tools and access its scripts need. Outside a container, decree-go-rest can supervise the daemon itself, as one process to run.
 - **Safe to expose behind a TLS reverse proxy:** per-endpoint bearer secrets, request limits, rate budgets that unauthenticated traffic cannot exhaust for real callers.
 - **Standard, discoverable:** an OpenAPI 3.1 document generated from the config, JSON responses, W3C Trace Context passed through to the run.
 
@@ -94,11 +95,21 @@ endpoints:
     reply:
       to: "{{wait_id}}"
       event: approve
+
+  # A lease's status, read-only, from the gpu_lease machine's state/ folder.
+  # Nothing outside .decree/machines/gpu_lease/state/ is reachable.
+  - path: /leases/by-id/{id}
+    action: read # GET and HEAD; never runs decree
+    secret_env: DECREE_GO_REST_READ_SECRET # state/ holds anything the machine writes
+    patterns: { id: "[0-9TZ.-]+-[a-f0-9]{6}" }
+    read:
+      machine: gpu_lease
+      path: "status/leases/{{id}}.json" # under .decree/machines/gpu_lease/state/
 ```
 
 It is [`example/.decree/decree-go-rest.yml`](example/.decree/decree-go-rest.yml) in the repository, beside the `compose.yml` that runs it ([§11](#11-command-line-and-packaging)).
 
-**Keys.** Every key is optional except `endpoints`, an `emit` endpoint's `message.machine`, a `reply` endpoint's `reply.to` and `reply.event`, and a resolvable secret. The key of the removed built-in endpoints ([§13](#13-differences-from-existentials-decree-webhook)) is not accepted: it is a config error that names the endpoint `action` form. Durations use decree's format: a whole number and `s`, `m`, `h` or `d`.
+**Keys.** Every key is optional except `endpoints`, an `emit` endpoint's `message.machine`, a `reply` endpoint's `reply.to` and `reply.event`, a `read` endpoint's `read.machine`, and a resolvable secret. The key of the removed built-in endpoints ([§13](#13-differences-from-existentials-decree-webhook)) is not accepted: it is a config error that names the endpoint `action` form. Durations use decree's format: a whole number and `s`, `m`, `h` or `d`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -109,26 +120,28 @@ It is [`example/.decree/decree-go-rest.yml`](example/.decree/decree-go-rest.yml)
 | `daemon.enabled` / `daemon.interval` | `true` / `2s` | Supervise `decree daemon --interval <interval>`. `DECREE_GO_REST_DAEMON` overrides `enabled` ([§11](#11-command-line-and-packaging)); the container image turns it off. |
 | `limits.*` | as above | Request body cap, and the two rate budgets ([§6](#6-limits)). |
 | `endpoints[].path` | | `/` followed by literal segments and `{name}` segments. One full segment per parameter. |
-| `endpoints[].action` | `emit` | `emit`: queue a new message with `decree emit` ([§4](#4-handling-a-request)); requires `message` and forbids `reply`. `reply`: reply to a run waiting in a `reply` state with `decree reply` ([§4](#4-handling-a-request)); requires `reply` and forbids `message`. decree 0.5's `event` is a config error that names `action: reply`. |
+| `endpoints[].action` | `emit` | `emit`: queue a new message with `decree emit` ([§4](#4-handling-a-request)); requires `message` and forbids `reply`. `reply`: reply to a run waiting in a `reply` state with `decree reply` ([§4](#4-handling-a-request)); requires `reply` and forbids `message`. `read`: serve `GET` and `HEAD` from one machine's `state/` folder, read-only ([§14](#14-reading-a-machines-state)); requires `read` and forbids `message`, `reply` and `body`. decree 0.5's `event` is a config error that names `action: reply`. |
 | `endpoints[].secret_env` | the top-level one | This endpoint's secret. |
 | `endpoints[].patterns` | | Per-parameter regular expression (Go RE2), anchored automatically. It replaces the default pattern: `[A-Za-z0-9._-]{1,128}` for a parameter a `reply` endpoint uses in `reply.to`, since wait ids contain `.`; `[A-Za-z0-9_\-!]+` for any other. |
-| `endpoints[].body` | `required` for `emit`, `optional` for `reply` | `required`: a blank body is a 400. `optional`: an empty body is allowed. `none`: any body is a 400. A `reply` endpoint's body is the note. |
+| `endpoints[].body` | `required` for `emit`, `optional` for `reply`; not allowed for `read` | `required`: a blank body is a 400. `optional`: an empty body is allowed. `none`: any body is a 400. A `reply` endpoint's body is the note. |
 | `endpoints[].message.machine` | | `emit`: the decree machine, `.decree/machines/<name>/machine.yml` in the project. |
 | `endpoints[].message.params` | | `emit`: values for the machine's `data`. A string may contain `{{name}}` placeholders for path parameters. |
 | `endpoints[].reply.to` | | `reply`: the wait id of the run to reply to, or its run id (its current wait), a string that may contain `{{name}}` placeholders, such as `'{{wait_id}}'`. |
 | `endpoints[].reply.event` | | `reply`: the event the run takes, a string that may contain `{{name}}` placeholders. A literal must match decree's event-name pattern, `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`. |
+| `endpoints[].read.machine` | | `read`: the machine whose `state/` folder is served, installed in the project: `.decree/machines/<machine>/machine.yml` exists. |
+| `endpoints[].read.path` | the whole `state/` folder | `read`: a file or directory under `.decree/machines/<machine>/state/`. Relative, of segments matching `[A-Za-z0-9._-]+`, none `.` or `..` and none starting with `.`. It may contain `{{name}}` placeholders for path parameters. It need not exist at startup. |
 
 **Validation.** Every failure here is fatal at startup: the process exits non-zero and lists every error. Nothing serves until all of them pass.
 
-1. **Path shape:** `^/[A-Za-z0-9._\-/{}]+$`, no `..`, no empty segments, every `{name}` a full segment matching `\w+`. No duplicate paths, and no two paths that conflict as `net/http` patterns. `/healthz` and `/openapi.json` are reserved ([§7](#7-health-and-openapi)): no path is either, or under either, whatever `DECREE_GO_REST_OPENAPI` says.
+1. **Path shape:** `^/[A-Za-z0-9._\-/{}]+$`, no `..`, no empty segments, every `{name}` a full segment matching `\w+`. No duplicate paths, and no two routes that conflict as `net/http` patterns: `POST <path>` for `emit` and `reply`; `GET <path>` for `read`, and `GET <path>/{rest...}` too when it has no parameters. `/healthz` and `/openapi.json` are reserved ([§7](#7-health-and-openapi)): no path is either, or under either, whatever `DECREE_GO_REST_OPENAPI` says.
 2. **Patterns:** every `patterns` key is a parameter of its path, and every pattern compiles.
-3. **Action and placeholders:** `action` is `emit` or `reply` (`event`, decree 0.5's name, is an error that names `action: reply`), with its required key and without the other's; a mix names the form needed. Every `{{name}}` in `params` (`emit`) or in `reply.to` and `reply.event` (`reply`) is a parameter of the path. Placeholders appear only in string values. Every path parameter is used at least once, so a parameter cannot be silently dropped. A `reply` endpoint has a non-empty `reply.to` and `reply.event`, and a literal `reply.event` matches decree's event-name pattern.
-4. **Machine** (`emit` only): `message.machine` names a machine in the project, a file `.decree/machines/<machine>/machine.yml`.
+3. **Action and placeholders:** `action` is `emit`, `reply` or `read` (`event`, decree 0.5's name, is an error that names `action: reply`), with its required key and without the others'; a mix names the form needed. A `read` endpoint has no `body`, and its `read.path` has the shape of the table above. Every `{{name}}` in `params` (`emit`), in `reply.to` and `reply.event` (`reply`) or in `read.path` (`read`) is a parameter of the path. Placeholders appear only in string values. Every path parameter is used at least once, so a parameter cannot be silently dropped. A `reply` endpoint has a non-empty `reply.to` and `reply.event`, and a literal `reply.event` matches decree's event-name pattern.
+4. **Machine** (`emit` and `read`): `message.machine` or `read.machine` names a machine in the project, a file `.decree/machines/<machine>/machine.yml`.
 5. **Params** (`emit` only): every `params` key is in that machine's `data` (read its YAML). A literal value matches the data's type (`string`, `int`, `bool`). A value with a placeholder requires `string` data.
 6. **Secrets:** each referenced environment variable is set, non-blank, and at least 32 characters long.
 7. **decree:** the `decree` binary runs, `decree --version` reports 0.6.0 or newer (a 0.6.0 release candidate, `0.6.0-rc.N`, counts as 0.6; an older version is an error that names the version found and the one needed), and `decree check --format json` in the project reports `"valid": true`.
 
-A `reply` endpoint is checked for its shape only: which runs are waiting changes over time.
+A `reply` endpoint is checked for its shape only: which runs are waiting changes over time. Neither does `read.path` have to exist, since state is written over time.
 
 `decree-go-rest -check -config <file>` runs exactly this validation, prints the result and exits 0 or 1, without listening.
 
@@ -138,11 +151,12 @@ The order is fixed. It is what makes the rate budgets fair ([§6](#6-limits)).
 
 1. **Route.** Match the path (exactly one trailing slash is ignored) against the endpoints, `/healthz` and, when it is on, `/openapi.json`.
    - An unknown path is a 404, charged to the failure budget.
-   - A known path with the wrong method is a 405 with `Allow`, also charged to the failure budget.
+   - A known path with the wrong method is a 405 with `Allow`, also charged to the failure budget: `Allow: POST` for `emit` and `reply`, `Allow: GET, HEAD` for `read`.
+   - A path that is not in canonical form, such as one with a `..` or `.` segment as sent, is unknown: a 404, never a redirect.
 2. **Authenticate.** `Authorization: Bearer <secret>`, compared in constant time, lengths checked first. Missing, malformed or wrong: 401, charged to the failure budget.
 3. **Budget.** An authenticated request spends from `rate_max`. When it is exhausted: 429 with `Retry-After`.
 4. **Validate parameters.** Each is URL-decoded once, then must fully match its pattern and be at most 200 bytes. Otherwise: 400.
-5. **Read the body,** at most `max_body_bytes`. Over the cap: 413. Then apply the endpoint's `body` rule (400 when violated). The body is opaque bytes; for `emit`, a non-empty body gets a trailing newline if it lacks one.
+5. **Read the body** (`emit` and `reply`; a `read` endpoint ignores it), at most `max_body_bytes`. Over the cap: 413. Then apply the endpoint's `body` rule (400 when violated). The body is opaque bytes; for `emit`, a non-empty body gets a trailing newline if it lacks one.
 6. **Emit** (`action: emit`). Run, with no shell:
 
    ```text
@@ -165,6 +179,12 @@ The order is fixed. It is what makes the rate budgets fair ([§6](#6-limits)).
    - `<to>` and `<event>` are `reply.to` and `reply.event` with their placeholders substituted.
    - **The note** is the body unchanged (no newline added), passed as one argv entry, `-m=<body>`, so a note that starts with `-` is never read as an option. An empty body passes no `-m`. A body holding a NUL byte, which argv cannot carry, is a 400. Nothing goes to stdin.
    - **Working directory, environment, mode and timeout:** as for `emit`.
+
+   **Read** (`action: read`). No decree runs and nothing is written ([§14](#14-reading-a-machines-state)):
+
+   - The path to serve is `read.path` with its placeholders substituted, then, for an endpoint without path parameters, the `<rest>` below its path. Every segment of both must match `[A-Za-z0-9._-]+` and not start with `.`.
+   - It is resolved under `.decree/machines/<machine>/state/`, after symlinks, and must stay inside it, with no name below it starting with `.`, and be a regular file or a directory.
+   - A file is served with `http.ServeContent`, under a strong `ETag` of its SHA-256; a directory as a JSON listing.
 7. **Respond.**
 
    | `decree emit` | Response |
@@ -178,6 +198,14 @@ The order is fixed. It is what makes the rate budgets fair ([§6](#6-limits)).
    | exit 0 | 201 with `{"id": …, "path": …, "to": …, "event": …}`, from reply's JSON plus the wait id and event replied |
    | exit 1 (the run is not waiting, or does not accept the event) | 409 with `{"error": "<decree's stderr message>"}` |
    | anything else, or the timeout | 500 with `{"error": "could not queue the reply"}`; the details are logged, not returned |
+
+   | `read` | Response |
+   | --- | --- |
+   | a file | 200 with its bytes; 206 for a `Range`; 304 when `If-None-Match` or `If-Modified-Since` says it is unchanged |
+   | a directory | 200 with its listing; 304 when `If-None-Match` names its `ETag` |
+   | a segment outside `[A-Za-z0-9._-]+` or starting with `.` | 400 |
+   | nothing there, outside `state/`, a dotfile, or neither a file nor a directory | 404, spent from the authenticated budget |
+   | a read failure | 500 with `{"error": "could not read the state"}`; the reason is logged, not returned |
 
 Every error response is JSON, `{"error": "<message>"}`, with `Content-Type: application/json`.
 
@@ -213,7 +241,7 @@ Besides the configured endpoints, decree-go-rest serves two paths. Neither takes
 | Endpoint | Auth | Does |
 | --- | --- | --- |
 | `GET /healthz` | none | Always served. 200 `{"ok": true, "daemon": {"enabled", "running", "pid", "restarts", "since"}, "config": {"loaded_at", "error": null}}`. 503 with the same body when the daemon is enabled but not running, or the last config reload failed. Exempt from rate limits. |
-| `GET /openapi.json` | none | Served only when `DECREE_GO_REST_OPENAPI` is `true` ([§11](#11-command-line-and-packaging)); otherwise a 404 like any unknown path. An OpenAPI 3.1 document of every configured endpoint, `/healthz` and itself: paths, path parameters with their patterns, the bearer scheme, request bodies as `text/plain`, and each endpoint's responses by its action ([§4](#4-handling-a-request), steps 6 and 7). Generated from the loaded config, so it follows reloads. Exempt from rate limits. |
+| `GET /openapi.json` | none | Served only when `DECREE_GO_REST_OPENAPI` is `true` ([§11](#11-command-line-and-packaging)); otherwise a 404 like any unknown path. An OpenAPI 3.1 document of every configured endpoint, `/healthz` and itself: paths, path parameters with their patterns, the bearer scheme, request bodies as `text/plain`, and each endpoint's responses by its action ([§4](#4-handling-a-request), steps 6 and 7). A `read` endpoint is documented as `GET` and `HEAD` with its path parameters, `<path>/{rest}` beside it when it has none, the listing schema, file responses with the content types of [§14](#14-reading-a-machines-state), `304`, `404` and the bearer scheme. Generated from the loaded config, so it follows reloads. Exempt from rate limits. |
 
 Serving the document is opt-in because it lists every path.
 
@@ -228,9 +256,9 @@ Serving the document is opt-in because it lists every path.
 ## 9. Logging and tracing
 
 - **Format.** Logs are JSON lines on stderr (`log/slog`).
-- **One record per request:** `method`, `route` (the configured pattern, never the raw path, so parameter values stay out of logs), `status`, `duration_ms`, `message_id` when a message or reply was queued, and `trace_id` when the request carried a valid `traceparent`.
-- **Never logged:** secrets, bodies (notes included) and parameter values, so neither a wait id nor an event taken from the path.
-- **Startup records** list every route with its action, the machine an `emit` endpoint emits to, and the daemon command line.
+- **One record per request:** `method`, `route` (the configured pattern, never the raw path, so parameter values stay out of logs; a request below a `read` endpoint's path logs the endpoint's path, never the file asked for), `status`, `duration_ms`, `message_id` when a message or reply was queued, and `trace_id` when the request carried a valid `traceparent`.
+- **Never logged:** secrets, bodies (notes included) and parameter values, so neither a wait id nor an event taken from the path, nor a file name a `read` endpoint served.
+- **Startup records** list every route with its action, the machine an `emit` endpoint emits to or a `read` endpoint reads, and the daemon command line.
 - **Traces.** decree writes the trace itself (`runs/<id>/traces.jsonl`). decree-go-rest only passes `traceparent` on, so a caller that traces its request sees the decree run as part of the same trace.
 
 ## 10. Security
@@ -239,6 +267,8 @@ decree's [SECURITY.md](https://github.com/jtmckay/decree/blob/main/SECURITY.md) 
 
 - **Secrets** come only from the environment and are at least 32 characters. Generate one with `openssl rand -hex 32`. Give an endpoint that reaches a powerful machine its own `secret_env`.
 - **Approval endpoints get their own secret.** An `action: reply` endpoint answers a question a run is waiting on in a `reply` state, often an approval. Answering a run's question, such as an approval, deserves its own secret: give each `reply` endpoint its own `secret_env`, as the example's `/approve/{wait_id}` does with `DECREE_GO_REST_APPROVE_SECRET`, so a caller that may queue messages cannot also approve them.
+- **Read endpoints get their own secret.** A machine's `state/` can hold anything the machine writes, so give each `read` endpoint its own `secret_env`, as the example's `/leases/by-id/{id}` does with `DECREE_GO_REST_READ_SECRET`.
+- **A read endpoint reaches one machine's `state/` only,** never its `runs/`, `inbox/`, `scripts/` or `.env`, nor another machine's: `read.path` and each requested segment are `[A-Za-z0-9._-]+` without a leading dot, and the path, after symlinks, must lie inside the machine's resolved `state/` folder, or it is a 404. It never runs decree and never writes. The container needs no change: `.decree/` is already mounted read-only.
 - **Listen on localhost by default.** Expose the service only through a TLS reverse proxy.
 - **Path parameters reach decree only as argv entries,** `--param` values or `decree reply`'s `<to>` and `<event>`: no shell, and restricted by their pattern. Message bodies reach decree only on stdin; a note only as the one argv entry `-m=<body>`.
 - **No endpoint can choose the machine:** `message.machine` is fixed in the config, and a placeholder is not allowed there.
@@ -261,7 +291,7 @@ decree-go-rest [-config decree-go-rest.yml] [-check] [-healthcheck]
   | `DECREE_GO_REST_DAEMON` | | Overrides `daemon.enabled` when set and non-empty: `true` or `false`. Any other value is a config error. |
   | `DECREE_GO_REST_OPENAPI` | `false` | `true` serves `GET /openapi.json`; `false`, unset or empty does not. Any other value is a startup error. |
 - **Releases:** the container image below is the supported way to run decree-go-rest. `.github/workflows/docker.yml` publishes it to `ghcr.io/jtmckay/decree-go-rest`: `X.Y.Z`, `X.Y` and `latest` for a `vX.Y.Z` tag, `main` and `sha-<commit>` for the main branch. The binary inside is static (`CGO_ENABLED=0`) and reports the tag or commit with `-version`.
-- **`example/`:** `.decree/decree-go-rest.yml`, the example config of §3, and `compose.yml`: decree-go-rest from the image, with `.decree/` read-only but for `inbox/`, and `decree install && decree daemon` in a container of its own, built from `example/daemon/Dockerfile` (decree `v0.6.0`), with the project read-write: decree 0.6 installs a project's plugins before the daemon runs.
+- **`example/`:** `.decree/decree-go-rest.yml`, the example config of §3, and `compose.yml`: decree-go-rest from the image, with each `secret_env` of the example from `.env`, `.decree/` read-only but for `inbox/`, and `decree install && decree daemon` in a container of its own, built from `example/daemon/Dockerfile` (decree `v0.6.0`), with the project read-write: decree 0.6 installs a project's plugins before the daemon runs.
 - **`decree-go-rest.schema.json`:** a JSON Schema of the config, so an editor completes keys. Point a config at it with `# yaml-language-server: $schema=…`, as decree's machines do.
 - **Container image.** The `Dockerfile` ships decree-go-rest and the `decree` binary its endpoints run, decree `v0.6.0` by default (the `DECREE_TAG` build argument). It reads `/project/.decree/decree-go-rest.yml` and sets `DECREE_GO_REST_DAEMON=false`: the daemon runs the project's scripts, which need their own tools and write access to the project, so it runs in a container of its own. Its stop grace period must cover the 10 s of in-flight requests ([§5](#5-the-daemon)); the example gives it 15 s.
 
@@ -281,6 +311,7 @@ decree-go-rest [-config decree-go-rest.yml] [-check] [-healthcheck]
 - **Supervision tests** with a stub daemon: restart with back-off, back-off reset, graceful SIGTERM, then SIGKILL after the timeout, and the lock refusing a second instance.
 - **Reload tests:** an atomic swap on a valid change; old config kept and `/healthz` 503 on an invalid one; the daemon untouched.
 - **End-to-end test** (skipped with a note when `decree`, 0.6.0 or newer, is not on `PATH`): a temp project in decree 0.6's layout, each machine a `machines/<name>/machine.yml` with its scripts in `machines/<name>/scripts/`, and one machine whose script records its `DECREE_DATA_*`. decree-go-rest with the real decree and daemon receives a POST, and the test waits until the run is `done` and checks the recorded params. Then a run of a machine with a `reply` state waits; a POST with a note to an `action: reply` endpoint, on its own secret, runs `decree reply` with `approve`, and the run finishes.
+- **Read endpoint tests** (`httptest` and temp directories): the listing; a file, with each content type; `HEAD`, `Range`, `If-None-Match` with `304`, and `405` with `Allow`; a 404 for a missing file, a dotfile reached through a symlink, a symlink out of `state/`, and a FIFO; a 400 for a bad segment, a `..` that reaches the endpoint (`..%2f`) and an encoded `%2e%2e`; placeholders; truncation at 1000 entries; the auth and budget order; validation errors; and the OpenAPI document of each form (golden).
 - **The gate** runs `gofmt -l`, `go vet ./...` and `go test -race ./...`.
 
 ## 13. Differences from existential's decree-webhook
@@ -296,6 +327,7 @@ decree-go-rest [-config decree-go-rest.yml] [-check] [-healthcheck]
 | A separate container for the daemon | Still a separate container in Docker; decree-go-rest supervises `decree daemon` when `daemon.enabled` is true | The daemon's image is the project's, with its scripts' tools; the request-facing container stays minimal and can only queue messages. Outside Docker, supervising it keeps one process to run. |
 | Inbox only | Reply endpoints and opt-in OpenAPI: an endpoint with `action: reply` replies to a run waiting in a `reply` state, and `GET /openapi.json` is served when `DECREE_GO_REST_OPENAPI=true` | decree's replies (0.5's `person` state, 0.6's `reply` state) make approvals natural over HTTP, each on its own path, secret, patterns and rate budget. This replaced built-ins (a `builtins` config with `GET /runs/{id}` and `POST /runs/{wait_id}/replies/{event}`), removed in migration 08: every endpoint is configured. |
 | No tracing | `traceparent` passed through to the run | decree 0.5 runs are OpenTelemetry traces. |
+| Inbox only: reading a machine's state needs shell access | `action: read` serves one machine's `state/` folder over `GET` and `HEAD`, read-only ([§14](#14-reading-a-machines-state)) | A machine or a service on another host can check a lease or find a service from `decree_lease`'s or `decree_registry`'s state with `curl`, on its own secret, without access to the project. |
 | Written for decree 0.4 | decree 0.6.0 or newer: `action: reply` runs `decree reply`; machines are `.decree/machines/<name>/machine.yml`; the example's daemon runs `decree install && decree daemon` | Migration 09 moved from decree 0.5 to 0.6 and follows 0.6's names, without legacy aliases: `decree event` became `decree reply`, a `person` state a `reply` state, and a machine file a directory. So `action: event` is a config error that names `action: reply`, and an older decree fails validation step 7. |
 
 **Kept unchanged:**
@@ -310,3 +342,76 @@ decree-go-rest [-config decree-go-rest.yml] [-check] [-healthcheck]
 - startup validation that refuses to serve a half-working route table;
 - a health check that needs no curl;
 - golden tests of what reaches decree.
+
+## 14. Reading a machine's state
+
+A decree machine keeps what others may read in its `state/` folder: `decree_lease` writes `state/status/leases/<id>.json` and `state/status/resources/<resource>.json`, and `decree_registry` writes `state/health.json`. An endpoint with `action: read` serves files from one machine's `state/` folder over HTTP, read-only. It never runs decree and never writes. Nothing outside `.decree/machines/<machine>/state/` can be reached through it.
+
+```yaml
+endpoints:
+  # A directory: GET /leases lists it; GET /leases/<file> returns one file in it, at any
+  # depth below (GET /leases/sub/x.json).
+  - path: /leases
+    action: read
+    secret_env: DECREE_GO_REST_READ_SECRET
+    read:
+      machine: gpu_lease
+      path: status/leases # under .decree/machines/gpu_lease/state/
+
+  # One file per request, named by a path parameter.
+  - path: /leases/by-id/{id}
+    action: read
+    patterns: { id: "[0-9TZ.-]+-[a-f0-9]{6}" }
+    read:
+      machine: gpu_lease
+      path: status/leases/{{id}}.json
+
+  # The whole state folder of a machine.
+  - path: /registry
+    action: read
+    read: { machine: decree_registry }
+```
+
+The keys and their validation are in [§3](#3-configuration-decree-go-restyml).
+
+**Handling a request.** Steps 1–4 of [§4](#4-handling-a-request) apply unchanged: routing, authentication, the budget and the parameters. A `read` endpoint answers `GET` and `HEAD`; any other method is a 405 with `Allow: GET, HEAD`, charged to the failure budget.
+
+**What is served** is decided per request:
+
+- **No path parameters, and `read.path` is a directory.** The endpoint's own path (`/leases`, `/leases/`) returns the listing. `<endpoint path>/<rest>` returns the file or directory at `<rest>` below it, at any depth. Each segment of `<rest>`, URL-decoded once, must match `[A-Za-z0-9._-]+` and must not start with `.`; otherwise it is a 400. So `/leases/..%2f..%2fscripts` and `/leases/%2e%2e` are 400s, while `/leases/../scripts` as sent fails routing (step 1) and is a 404.
+- **`read.path` is a file.** The endpoint's path returns it, and nothing below it is served: a 404.
+- **`read.path` has placeholders.** The substituted path is served, whether it is a file or a directory; there is no `<rest>`. A substituted value that makes a segment invalid, such as one starting with `.`, which a parameter's pattern may allow, is a 400.
+- **Nothing there:** a 404. The route matched, so it spends from the authenticated budget, not the failure budget. A machine that has written no `state/` yet is a 404 too.
+
+**Containment.**
+
+- The resolved path, after symlinks (`filepath.EvalSymlinks`), must be inside the machine's resolved `state/` folder, and none of its names below that folder may start with `.`. Otherwise it is a 404, the same as missing, so a symlink cannot reveal anything outside, nor a hidden file inside.
+- Only regular files and directories are served. Anything else, such as a FIFO or a device, is a 404.
+- Names starting with `.` are never served and never listed.
+- A failure to read what passed these checks, such as a permission error, is a 500 with `{"error": "could not read the state"}`; the reason is logged with the route, never the file's name.
+
+**A file** is served with `http.ServeContent`, which handles `HEAD`, `Range` (206, or 416 outside the file), `If-Modified-Since` and `If-None-Match`:
+
+- `Last-Modified` is the file's modification time. `ETag` is a strong tag of its content's SHA-256, in hex.
+- `Cache-Control: no-cache`, so a client revalidates each time and gets a `304` while nothing changed.
+- `Content-Type` by extension, case-insensitively: `.json` is `application/json`; `.md` is `text/markdown; charset=utf-8`; `.txt`, `.log`, `.yml` and `.yaml` are `text/plain; charset=utf-8`; anything else is `application/octet-stream`.
+- `X-Content-Type-Options: nosniff`.
+
+**A directory** is a `200`, `application/json`:
+
+```json
+{
+  "path": "/leases",
+  "items": [
+    {"name": "x.json", "type": "file", "size": 412, "modified": "2026-11-24T17:00:00Z", "href": "/leases/x.json"},
+    {"name": "old", "type": "directory", "modified": "2026-11-24T17:00:00Z", "href": "/leases/old/"}
+  ]
+}
+```
+
+- `path` is the URL path of the directory, without a trailing slash: the endpoint's path, then `/<rest>`; for an endpoint with path parameters, the path requested.
+- `items` are sorted by name. `size` is a file's, in bytes; a directory has none. `modified` is RFC 3339, in UTC, to the second.
+- `href` is the URL path to request the entry; a directory's ends in `/`. An endpoint with path parameters serves nothing below its path, so its entries have no `href`.
+- The listing holds only what a request could be served: regular files and directories, and symlinks that resolve to one inside `state/`. Names starting with `.`, and names no request can spell (outside `[A-Za-z0-9._-]+`), are left out.
+- It has an `ETag` of the listing's bytes, a strong tag of their SHA-256, and `Cache-Control: no-cache`. It answers `If-None-Match` naming that tag, or `*`, with `304` and no body. `HEAD` answers the headers alone.
+- A listing holds at most 1000 entries. Beyond that it says `"truncated": true`; the key is absent otherwise.

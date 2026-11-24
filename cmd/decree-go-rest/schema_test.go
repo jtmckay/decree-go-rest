@@ -85,6 +85,9 @@ func TestSchemaRejects(t *testing.T) {
 		"endpoints: [{ path: /a, action: emit, message: { machine: m } }]\n",
 		"endpoints: [{ path: '/a/{w}', action: reply, reply: { to: '{{w}}', event: review.ok } }]\n",
 		"endpoints: [{ path: '/a/{w}/{e}', action: reply, body: none, reply: { to: '{{w}}', event: '{{e}}' } }]\n",
+		"endpoints: [{ path: /r, action: read, read: { machine: m } }]\n",
+		"endpoints: [{ path: /r, action: read, secret_env: R, read: { machine: m, path: status/leases } }]\n",
+		"endpoints: [{ path: '/r/{id}', action: read, patterns: { id: '[a-z]+' }, read: { machine: m, path: 'status/leases/{{id}}.json' } }]\n",
 	} {
 		if err := s.Validate(yamlInstance(t, src)); err != nil {
 			t.Fatalf("valid config rejected: %v\n%s", err, src)
@@ -116,6 +119,17 @@ func TestSchemaRejects(t *testing.T) {
 		"reply no to":      "endpoints: [{ path: /a, action: reply, reply: { event: e } }]\n",
 		"bad event name":   "endpoints: [{ path: /a, action: reply, reply: { to: r, event: Approve } }]\n",
 		"unknown reply":    "endpoints: [{ path: /a, action: reply, reply: { to: r, event: e, note: x } }]\n",
+		"read no read":     "endpoints: [{ path: /a, action: read }]\n",
+		"read no machine":  "endpoints: [{ path: /a, action: read, read: { path: x } }]\n",
+		"read message":     "endpoints: [{ path: /a, action: read, message: { machine: m }, read: { machine: m } }]\n",
+		"read reply":       "endpoints: [{ path: /a, action: read, reply: { to: r, event: e }, read: { machine: m } }]\n",
+		"read body":        "endpoints: [{ path: /a, action: read, body: none, read: { machine: m } }]\n",
+		"emit with read":   "endpoints: [{ path: /a, message: { machine: m }, read: { machine: m } }]\n",
+		"read dot dot":     "endpoints: [{ path: /a, action: read, read: { machine: m, path: status/../x } }]\n",
+		"read hidden":      "endpoints: [{ path: /a, action: read, read: { machine: m, path: .env } }]\n",
+		"read absolute":    "endpoints: [{ path: /a, action: read, read: { machine: m, path: /etc } }]\n",
+		"read machine dir": "endpoints: [{ path: /a, action: read, read: { machine: ../m } }]\n",
+		"unknown read":     "endpoints: [{ path: /a, action: read, read: { machine: m, mode: x } }]\n",
 		"old key":          config.RemovedKey + ": {}\n" + ok,
 	} {
 		if err := s.Validate(yamlInstance(t, src)); err == nil {

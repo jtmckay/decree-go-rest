@@ -212,7 +212,7 @@ func TestReloadRestartOnlyKeys(t *testing.T) {
 
 	// A second project, valid on its own, with the same machines.
 	other := t.TempDir()
-	for _, m := range []string{"notify", "comfy_image", "flags"} {
+	for _, m := range []string{"notify", "comfy_image", "flags", "gpu_lease"} {
 		raw, err := os.ReadFile(config.MachineFile(f.proj, m))
 		if err != nil {
 			t.Fatal(err)

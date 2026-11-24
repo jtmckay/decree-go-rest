@@ -1,6 +1,6 @@
 # decree-go-rest
 
-decree-go-rest is the HTTP front door of a [decree](https://github.com/jtmckay/decree) 0.6 project. Endpoints defined in one YAML file turn authenticated `POST`s into decree inbox messages, always through `decree emit`, so ids, validation of the machine and its typed `params`, and trace context stay decree's. An endpoint can instead reply to a run waiting in a `reply` state, through `decree reply`, such as an approval with its own secret. It runs no work itself: `decree daemon` processes those messages, in a container of its own beside it, or supervised by decree-go-rest when it runs outside Docker. The design, and the source of truth for every behaviour below, is [SPEC.md](SPEC.md).
+decree-go-rest is the HTTP front door of a [decree](https://github.com/jtmckay/decree) 0.6 project. Endpoints defined in one YAML file turn authenticated `POST`s into decree inbox messages, always through `decree emit`, so ids, validation of the machine and its typed `params`, and trace context stay decree's. An endpoint can instead reply to a run waiting in a `reply` state, through `decree reply`, such as an approval with its own secret, or serve one machine's `state/` folder over `GET`, read-only, such as a lease's status. It runs no work itself: `decree daemon` processes those messages, in a container of its own beside it, or supervised by decree-go-rest when it runs outside Docker. The design, and the source of truth for every behaviour below, is [SPEC.md](SPEC.md).
 
 ## Install
 
@@ -56,7 +56,7 @@ Every key of the config, with its default, is in [SPEC.md §3](SPEC.md#3-configu
 
 ## Endpoints
 
-Every configured endpoint is a `POST` with `Authorization: Bearer <secret>`, and has an `action` ([SPEC.md §3](SPEC.md#3-configuration-decree-go-restyml)):
+Every configured endpoint takes `Authorization: Bearer <secret>`, and has an `action` ([SPEC.md §3](SPEC.md#3-configuration-decree-go-restyml)). `emit` and `reply` take a `POST`; `read` takes `GET` and `HEAD`:
 
 - **`emit`** (the default) queues a new message. The body is opaque text, given to `decree emit` on stdin after an empty frontmatter block, so a body that starts with `---` is still body and only the config sets the message's frontmatter; it answers 201 with `{"id", "path", "machine"}`, and 400 when decree rejects the message (with decree's message).
 - **`reply`** replies to a run waiting in a `reply` state, with `decree reply <to> <event> [-m=<body>] --format json`; `<to>` is a wait id, or a run id for its current wait. The body is the optional note, passed unchanged as one argv entry. It answers 201 with `{"id", "path", "to", "event"}`, and 409 when the run is not waiting, or does not accept the event.
@@ -79,7 +79,30 @@ curl -sS -X POST "http://127.0.0.1:8801/approve/$WAIT_ID" \
   --data-binary 'Looks good.'
 ```
 
-Both answer 401, 404, 405, 413 or 429 as [SPEC.md §4](SPEC.md#4-handling-a-request) describes, and 500 when decree fails otherwise. Every error is JSON, `{"error": "…"}`.
+- **`read`** serves files from one machine's `state/` folder, read-only: it never runs decree and never writes, and nothing outside `.decree/machines/<machine>/state/` can be reached, nor any name starting with `.` ([SPEC.md §14](SPEC.md#14-reading-a-machines-state)). A file comes with a strong `ETag` (its SHA-256), `Last-Modified` and `Cache-Control: no-cache`, so a client that sends `If-None-Match` gets a `304` while nothing changed; `Range` works too. A directory is a JSON listing, `{"path", "items": [{"name", "type", "size", "modified", "href"}]}`, sorted by name, at most 1000 entries. Without path parameters, `GET <path>/<rest>` serves what lies below `read.path`, at any depth.
+
+**Checking a lease over HTTP.** [`decree_lease`](https://github.com/jtmckay/decree) writes each lease's status to `state/status/leases/<id>.json`. The example config serves it, on its own secret:
+
+```yaml
+  - path: /leases/by-id/{id}
+    action: read                    # GET and HEAD; never runs decree
+    secret_env: DECREE_GO_REST_READ_SECRET
+    patterns: { id: '[0-9TZ.-]+-[a-f0-9]{6}' }
+    read:
+      machine: gpu_lease
+      path: 'status/leases/{{id}}.json'  # under .decree/machines/gpu_lease/state/
+```
+
+so a machine, or a service on another host, checks whether its lease is held with:
+
+```sh
+curl -H "Authorization: Bearer $DECREE_GO_REST_READ_SECRET" https://decree.example.com/leases/by-id/<id>
+# 200 with the lease's JSON; 404 while there is none
+```
+
+A script that polls can keep the `ETag` and send it back as `If-None-Match`, to get a `304` until the status changes.
+
+Each answers 401, 404, 405, 413 (not `read`) or 429 as [SPEC.md §4](SPEC.md#4-handling-a-request) describes, and 500 when decree, or reading the state, fails otherwise. Every error is JSON, `{"error": "…"}`.
 
 Besides the endpoints ([§7](SPEC.md#7-health-and-openapi)):
 
@@ -106,7 +129,8 @@ decree's [SECURITY.md](https://github.com/jtmckay/decree/blob/main/SECURITY.md) 
 - **Approvals get their own secret.** Answering a run's question, such as an approval, deserves its own secret: give each `action: reply` endpoint its own `secret_env`, as the example config's `/approve/{wait_id}` does, so a caller that may queue messages cannot also approve them.
 - **Listen on localhost:** publish the container's port on `127.0.0.1` (as above), or keep it on a Compose network, and expose the service only through a TLS reverse proxy, such as Caddy; decree-go-rest does no TLS.
 - **Path parameters reach decree only as argv entries,** `--param` values or `decree reply`'s `<to>` and `<event>`: no shell, typed by decree, and restricted by their pattern (rejected, never repaired). Bodies reach decree only on stdin; a note only as the one argv entry `-m=<body>`.
-- **No endpoint can choose the machine:** `message.machine` is fixed in the config, and a placeholder is not allowed there.
+- **No endpoint can choose the machine:** `message.machine` and `read.machine` are fixed in the config, and a placeholder is not allowed there.
+- **Read endpoints get their own secret,** since a machine's `state/` can hold anything it writes, as the example's `/leases/by-id/{id}` does with `DECREE_GO_REST_READ_SECRET`. A `read` endpoint reaches only its machine's `state/` folder, after symlinks, never `runs/`, `inbox/`, `scripts/` or `.env`; anything else is a 404.
 - **Rate budgets:** authentication comes before either budget, so unauthenticated traffic can exhaust only the failure budget and never locks out a caller holding the right secret.
 - Messages may carry secrets, so decree-go-rest runs with umask `027`, and it never passes its own `DECREE_*` variables on to decree.
 
@@ -116,7 +140,7 @@ The image runs `decree-go-rest -config /project/.decree/decree-go-rest.yml`; arg
 
 **The daemon runs in its own container.** The image sets `DECREE_GO_REST_DAEMON=false`: `decree daemon` runs your machines' scripts, which need their own tools and the project read-write, so it does not belong in the container that takes requests. [`example/compose.yml`](example/compose.yml) runs both:
 
-- **`api`**, this image, with the mounts above, the secrets from a mode `600` `.env`, and the port on `127.0.0.1`;
+- **`api`**, this image, with the mounts above (a `read` endpoint needs nothing more: `.decree/` is already mounted read-only), the secrets from a mode `600` `.env`, and the port on `127.0.0.1`;
 - **`daemon`**, built from [`example/daemon/Dockerfile`](example/daemon/Dockerfile): Ubuntu with decree `v0.6.0` and nothing your scripts need yet, which is yours to fill in. It runs `decree install && decree daemon`, mounts the whole project read-write and publishes no port.
 
 Copy `compose.yml` and `daemon/` to your project, and [`example/.decree/decree-go-rest.yml`](example/.decree/decree-go-rest.yml) into its `.decree/`.

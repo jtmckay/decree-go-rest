@@ -57,6 +57,8 @@ const (
 	// ActionReply replies to a run waiting in a reply state with
 	// `decree reply`.
 	ActionReply = "reply"
+	// ActionRead serves files from one machine's state/ folder, read-only.
+	ActionRead = "read"
 )
 
 // Config is a loaded decree-go-rest.yml.
@@ -101,7 +103,7 @@ const (
 // Endpoint is one configured endpoint.
 type Endpoint struct {
 	Path string `yaml:"path"`
-	// Action is ActionEmit or ActionReply.
+	// Action is ActionEmit, ActionReply or ActionRead.
 	Action    string            `yaml:"action"`
 	SecretEnv string            `yaml:"secret_env"`
 	Patterns  map[string]string `yaml:"patterns"`
@@ -110,6 +112,8 @@ type Endpoint struct {
 	Message *Message `yaml:"message"`
 	// Reply is what a reply endpoint sends; nil when the key is absent.
 	Reply *Reply `yaml:"reply"`
+	// Read is what a read endpoint serves; nil when the key is absent.
+	Read *Read `yaml:"read"`
 }
 
 // ParamPattern is the pattern of the path parameter name, unanchored: the
@@ -146,6 +150,21 @@ type Reply struct {
 	To string `yaml:"to"`
 	// Event is the event the run takes.
 	Event string `yaml:"event"`
+}
+
+// Read is what a read endpoint serves: a file or directory under one
+// machine's state/ folder.
+type Read struct {
+	// Machine is the machine whose state/ folder is served.
+	Machine string `yaml:"machine"`
+	// Path is relative to the state/ folder, "" for the whole folder. It
+	// may hold {{name}} placeholders for path parameters.
+	Path string `yaml:"path"`
+}
+
+// StateDir is the state/ folder of a machine in a project.
+func StateDir(projectDir, machine string) string {
+	return filepath.Join(projectDir, ".decree", "machines", machine, "state")
 }
 
 // Param is one `params` entry, kept in the order of the config.
@@ -297,7 +316,8 @@ func Parse(data []byte) (*Config, error) {
 		if e.Action == "" {
 			e.Action = DefaultAction
 		}
-		if e.Body == "" {
+		// A read endpoint takes no body: validation reports one set.
+		if e.Body == "" && e.Action != ActionRead {
 			e.Body = DefaultBody
 			if e.Action == ActionReply {
 				e.Body = DefaultReplyBody

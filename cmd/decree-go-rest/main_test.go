@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -22,6 +23,13 @@ data:
   priority: { type: string, default: low }
 states:
   send: { invoke: send, transitions: { done: done } }
+  done: { final: true }
+`
+	leaseMachine = `name: gpu_lease
+description: test machine
+initial: hold
+states:
+  hold: { invoke: hold, transitions: { done: done } }
   done: { final: true }
 `
 	comfyMachine = `name: comfy_image
@@ -58,6 +66,7 @@ func exampleProject(t *testing.T) (string, *decreetest.Stub) {
 	proj := t.TempDir()
 	write(t, config.MachineFile(proj, "notify"), notifyMachine)
 	write(t, config.MachineFile(proj, "comfy_image"), comfyMachine)
+	write(t, config.MachineFile(proj, "gpu_lease"), leaseMachine)
 	path := filepath.Join(proj, "decree-go-rest.yml")
 	// The tests supervise a stub daemon; the example leaves it to its own container.
 	write(t, path, strings.Replace(string(example), "enabled: false ", "enabled: true ", 1))
@@ -67,6 +76,7 @@ func exampleProject(t *testing.T) (string, *decreetest.Stub) {
 	t.Setenv("DECREE_GO_REST_SECRET", strings.Repeat("a", 64))
 	t.Setenv("COMFY_SECRET", strings.Repeat("b", 32))
 	t.Setenv("DECREE_GO_REST_APPROVE_SECRET", strings.Repeat("c", 40))
+	t.Setenv("DECREE_GO_REST_READ_SECRET", strings.Repeat("r", 40))
 	t.Setenv(config.OpenAPIEnv, "")
 	t.Setenv(config.DaemonEnv, "")
 	return path, stub
@@ -81,8 +91,8 @@ func runCLI(args ...string) (code int, stdout, stderr string) {
 func TestCheckExampleOK(t *testing.T) {
 	path, stub := exampleProject(t)
 	code, out, errOut := runCLI("-check", "-config", path)
-	if code != 0 || out != "config ok: 4 endpoints\n" {
-		t.Fatalf("exit %d, stdout %q, stderr %q; want 0 and \"config ok: 4 endpoints\"", code, out, errOut)
+	if code != 0 || out != "config ok: 5 endpoints\n" {
+		t.Fatalf("exit %d, stdout %q, stderr %q; want 0 and \"config ok: 5 endpoints\"", code, out, errOut)
 	}
 	if calls := stub.Calls(t); len(calls) != 2 {
 		t.Errorf("decree calls = %q, want --version and check", calls)
@@ -99,7 +109,7 @@ func TestCheckDefaultConfigPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.Chdir(wd)
-	if code, out, errOut := runCLI("-check"); code != 0 || out != "config ok: 4 endpoints\n" {
+	if code, out, errOut := runCLI("-check"); code != 0 || out != "config ok: 5 endpoints\n" {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
 }
@@ -373,4 +383,45 @@ func TestVersionOf(t *testing.T) {
 			t.Errorf("versionOf(%v, %v) = %q, want %q", tc.info.Main.Version, tc.info.Settings, got, tc.want)
 		}
 	}
+}
+
+// TestAcceptanceCheckReadErrors is the sixth acceptance criterion of 10:
+// a read endpoint naming a machine the project does not have, a
+// read.path with .., and a body key each fail -check, which exits 1 and
+// names every error.
+func TestAcceptanceCheckReadErrors(t *testing.T) {
+	path, _ := exampleProject(t)
+	example, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := string(example) + `
+  - path: /missing
+    action: read
+    read: { machine: no_such_machine }
+
+  - path: /up
+    action: read
+    read: { machine: gpu_lease, path: status/../../scripts }
+
+  - path: /with-body
+    action: read
+    body: none
+    read: { machine: gpu_lease }
+`
+	write(t, path, cfg)
+	code, errOut := runRefused(t, "-check", "-config", path)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	for _, w := range []string{
+		"endpoint /missing: machine: machine no_such_machine: no file",
+		`endpoint /up: config: read.path segment ".." must match`,
+		"endpoint /with-body: config: body is not allowed with action: read",
+	} {
+		if !strings.Contains(errOut, w) {
+			t.Errorf("stderr lacks %q:\n%s", w, errOut)
+		}
+	}
+	fmt.Printf("evidence: decree-go-rest -check exit %d:\n%s", code, errOut)
 }
