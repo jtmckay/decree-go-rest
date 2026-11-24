@@ -11,9 +11,8 @@ import (
 	"testing"
 )
 
-// TestNoOldName: no file outside .decree/migrations/, .decree/runs/ and
-// the develop machine's orders (.decree/machines/develop/order/), which are
-// history, names the project by its old name. The names are
+// TestNoOldName: no file outside .decree/runs/ and the develop machine's
+// orders (.decree/machines/develop/order/), which are history, names the project by its old name. The names are
 // built here, so this file does not match itself.
 func TestNoOldName(t *testing.T) {
 	old := []string{"decree" + "-api", "DECREE" + "_API_"}
@@ -22,9 +21,8 @@ func TestNoOldName(t *testing.T) {
 		t.Fatal(err)
 	}
 	skip := map[string]bool{
-		".git":                                 true,
-		filepath.Join(".decree", "migrations"): true,
-		filepath.Join(".decree", "runs"):       true,
+		".git":                           true,
+		filepath.Join(".decree", "runs"): true,
 		filepath.Join(".decree", "machines", "develop", "order"): true,
 	}
 	checked := 0
