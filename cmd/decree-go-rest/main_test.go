@@ -142,7 +142,7 @@ endpoints:
 		"endpoint /comfy/{type}/{name}: machine: machine comfy_image: no file",
 		"endpoint /notify: params: params.priority: priority is string, the value is int",
 		"endpoint /comfy/{type}/{name}: secrets: COMFY_SECRET is 9 characters, at least 32 are required",
-		"decree: check: machines/bad.yml: line 1: missing field `description`",
+		"decree: check: machines/bad/machine.yml: line 1: missing field `description`",
 	}
 	for _, w := range wants {
 		if !strings.Contains(errOut, w) {
@@ -277,7 +277,7 @@ func TestAcceptanceRemovedKey(t *testing.T) {
 		if code != 1 {
 			t.Errorf("%q: exit %d, want 1", args, code)
 		}
-		for _, w := range []string{config.RemovedKey + " is no longer accepted", "`action: event`", config.OpenAPIEnv + "=true"} {
+		for _, w := range []string{config.RemovedKey + " is no longer accepted", "`action: reply`", config.OpenAPIEnv + "=true"} {
 			if !strings.Contains(errOut, w) {
 				t.Errorf("%q: stderr lacks %q:\n%s", args, w, errOut)
 			}
@@ -295,7 +295,7 @@ endpoints:
     message: { machine: notify, params: { title: '{{wait_id}}' } }
     reply: { to: '{{wait_id}}', event: approve }
   - path: /reply/{wait_id}
-    action: event
+    action: reply
     message: { machine: notify }
     reply: { to: '{{wait_id}}', event: approve }
 `)
@@ -305,13 +305,34 @@ endpoints:
 	}
 	for _, w := range []string{
 		"endpoint /approve/{wait_id}: config: reply is not allowed with action: emit",
-		"is action: event",
-		"endpoint /reply/{wait_id}: config: message is not allowed with action: event",
+		"is action: reply",
+		"endpoint /reply/{wait_id}: config: message is not allowed with action: reply",
 		"is action: emit (the default)",
 	} {
 		if !strings.Contains(errOut, w) {
 			t.Errorf("stderr lacks %q:\n%s", w, errOut)
 		}
+	}
+}
+
+// TestCheckActionEvent: decree 0.5's action: event fails -check, naming
+// action: reply (the acceptance criterion of 09).
+func TestCheckActionEvent(t *testing.T) {
+	path, _ := exampleProject(t)
+	example, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(example), "action: reply ") {
+		t.Fatal("the example config has no action: reply endpoint")
+	}
+	write(t, path, strings.Replace(string(example), "action: reply ", "action: event ", 1))
+	code, errOut := runRefused(t, "-check", "-config", path)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	if w := "endpoint /approve/{wait_id}: config: action: event is now action: reply"; !strings.Contains(errOut, w) {
+		t.Errorf("stderr lacks %q:\n%s", w, errOut)
 	}
 }
 

@@ -38,8 +38,8 @@ func openAPI(c *config.Config) ([]byte, error) {
 			params = append(params, pathParameter(name, e.ParamPattern(name), MaxParamBytes))
 		}
 		var op obj
-		if e.Action == config.ActionEvent {
-			op = eventOperation(c, e)
+		if e.Action == config.ActionReply {
+			op = replyOperation(c, e)
 		} else {
 			op = emitOperation(c, e)
 		}
@@ -70,7 +70,7 @@ func openAPI(c *config.Config) ([]byte, error) {
 		Info: obj{
 			"title":       "decree-go-rest",
 			"version":     "1",
-			"description": "The HTTP front door of a decree project: each endpoint queues a decree message, or replies to a run waiting for a person.",
+			"description": "The HTTP front door of a decree project: each endpoint queues a decree message, or replies to a run waiting in a reply state.",
 		},
 		Paths: paths,
 		Components: obj{
@@ -118,16 +118,16 @@ func emitOperation(c *config.Config, e config.Endpoint) obj {
 	return op
 }
 
-// eventOperation is the operation of an event endpoint: it replies to a
-// run waiting in a person state, with the body as the note.
-func eventOperation(c *config.Config, e config.Endpoint) obj {
+// replyOperation is the operation of a reply endpoint: it replies to a
+// run waiting in a reply state, with the body as the note.
+func replyOperation(c *config.Config, e config.Endpoint) obj {
 	var to, event string
 	if e.Reply != nil {
 		to, event = e.Reply.To, e.Reply.Event
 	}
 	op := obj{
-		"summary":     "Reply " + event + " to a run waiting for a person",
-		"description": fmt.Sprintf("Runs `decree event %s %s [-m=<note>] --format json`, with the body as the note. Authenticated with %s.", to, event, secretName(c, e.SecretEnv)),
+		"summary":     "Reply " + event + " to a run waiting in a reply state",
+		"description": fmt.Sprintf("Runs `decree reply %s %s [-m=<note>] --format json`, with the body as the note. Authenticated with %s.", to, event, secretName(c, e.SecretEnv)),
 		"security":    bearer,
 		"responses": obj{
 			"201": jsonResponse("The reply is queued.", ref("Reply")),

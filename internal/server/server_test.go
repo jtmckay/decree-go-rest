@@ -28,7 +28,7 @@ func TestMain(m *testing.M) {
 var (
 	secret      = strings.Repeat("a", 64)
 	comfySecret = strings.Repeat("b", 32)
-	// approveSecret is the own secret of the example's event endpoint.
+	// approveSecret is the own secret of the example's reply endpoint.
 	approveSecret = strings.Repeat("d", 48)
 )
 

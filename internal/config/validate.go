@@ -261,7 +261,7 @@ func register(mux *http.ServeMux, pattern string) (err error) {
 	return nil
 }
 
-// WaitIDPattern is the default pattern of a path parameter an event
+// WaitIDPattern is the default pattern of a path parameter a reply
 // endpoint uses in reply.to, since wait ids contain dots.
 const WaitIDPattern = `[A-Za-z0-9._-]{1,128}`
 
@@ -300,27 +300,29 @@ func (v *validator) endpoint(e Endpoint) {
 	switch e.Action {
 	case ActionEmit:
 		v.emitEndpoint(e, params)
-	case ActionEvent:
-		v.eventEndpoint(e, params)
+	case ActionReply:
+		v.replyEndpoint(e, params)
+	case "event":
+		v.add(e.Path, RuleConfig, "action: event is now action: reply, which runs decree reply; use action: reply")
 	default:
-		v.add(e.Path, RuleConfig, "action: %q is not emit or event", e.Action)
+		v.add(e.Path, RuleConfig, "action: %q is not emit or reply", e.Action)
 	}
 }
 
-// eventEndpoint checks the shape of an event endpoint. Which runs are
+// replyEndpoint checks the shape of a reply endpoint. Which runs are
 // waiting changes over time, so nothing else is checked at startup.
-func (v *validator) eventEndpoint(e Endpoint, params map[string]bool) {
+func (v *validator) replyEndpoint(e Endpoint, params map[string]bool) {
 	if e.Message != nil {
-		v.add(e.Path, RuleConfig, "message is not allowed with action: event, which sends reply: { to, event }; an endpoint that queues a message is action: emit (the default)")
+		v.add(e.Path, RuleConfig, "message is not allowed with action: reply, which sends reply: { to, event }; an endpoint that queues a message is action: emit (the default)")
 	}
 	if e.Reply == nil {
-		v.add(e.Path, RuleConfig, "action: event requires reply: { to: '{{wait_id}}', event: <event> }")
+		v.add(e.Path, RuleConfig, "action: reply requires reply: { to: '{{wait_id}}', event: <event> }")
 		return
 	}
 	used := map[string]bool{}
 	for _, f := range []struct{ key, value string }{{"reply.to", e.Reply.To}, {"reply.event", e.Reply.Event}} {
 		if f.value == "" {
-			v.add(e.Path, RuleConfig, "%s is required with action: event", f.key)
+			v.add(e.Path, RuleConfig, "%s is required with action: reply", f.key)
 			continue
 		}
 		for _, m := range placeholderRE.FindAllStringSubmatch(f.value, -1) {
@@ -343,7 +345,7 @@ func (v *validator) eventEndpoint(e Endpoint, params map[string]bool) {
 // emitEndpoint runs steps 3–5 for an emit endpoint.
 func (v *validator) emitEndpoint(e Endpoint, params map[string]bool) {
 	if e.Reply != nil {
-		v.add(e.Path, RuleConfig, "reply is not allowed with action: emit, which queues message: { machine, params }; an endpoint that replies to a waiting run is action: event")
+		v.add(e.Path, RuleConfig, "reply is not allowed with action: emit, which queues message: { machine, params }; an endpoint that replies to a waiting run is action: reply")
 	}
 	if e.Message == nil {
 		v.add(e.Path, RuleMachine, "action: emit requires message: { machine, params }")
@@ -447,7 +449,7 @@ type machineData struct {
 
 // MachineFile is the file of a machine in a project.
 func MachineFile(projectDir, machine string) string {
-	return filepath.Join(projectDir, ".decree", "machines", machine+".yml")
+	return filepath.Join(projectDir, ".decree", "machines", machine, "machine.yml")
 }
 
 func loadMachine(projectDir, name string) *machineData {

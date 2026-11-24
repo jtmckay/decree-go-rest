@@ -14,8 +14,13 @@ import (
 	"time"
 )
 
-// MinDecreeVersion is the oldest decree decree-go-rest works with.
-var MinDecreeVersion = [2]int{0, 5}
+// MinDecreeVersion is the oldest decree decree-go-rest works with: 0.6.0.
+// Only major and minor are compared, so a 0.6.0 release candidate, such
+// as 0.6.0-rc.4, counts as 0.6.
+var MinDecreeVersion = [2]int{0, 6}
+
+// minDecreeVersionText is MinDecreeVersion as error messages name it.
+const minDecreeVersionText = "0.6.0"
 
 // decreeTimeout bounds each decree command run during validation.
 const decreeTimeout = 30 * time.Second
@@ -30,18 +35,23 @@ func (c *Config) DecreeBinary() string {
 	return d
 }
 
-var versionRE = regexp.MustCompile(`(\d+)\.(\d+)(?:\.(\d+))?`)
+var versionRE = regexp.MustCompile(`(\d+)\.(\d+)(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?`)
 
 // ParseDecreeVersion extracts major and minor from `decree --version`
-// output such as "decree 0.5.0".
-func ParseDecreeVersion(out string) (major, minor int, err error) {
+// output such as "decree 0.6.0-rc.4", and the version as written, such as
+// "0.6.0-rc.4".
+func ParseDecreeVersion(out string) (major, minor int, text string, err error) {
 	m := versionRE.FindStringSubmatch(out)
 	if m == nil {
-		return 0, 0, fmt.Errorf("no version in %q", strings.TrimSpace(out))
+		return 0, 0, "", fmt.Errorf("no version in %q", strings.TrimSpace(out))
 	}
-	major, _ = strconv.Atoi(m[1])
-	minor, _ = strconv.Atoi(m[2])
-	return major, minor, nil
+	if major, err = strconv.Atoi(m[1]); err != nil {
+		return 0, 0, "", fmt.Errorf("version %q: %w", m[0], err)
+	}
+	if minor, err = strconv.Atoi(m[2]); err != nil {
+		return 0, 0, "", fmt.Errorf("version %q: %w", m[0], err)
+	}
+	return major, minor, m[0], nil
 }
 
 // checkReport is `decree check --format json` (schema/v1/cli/check.schema.json).
@@ -70,13 +80,13 @@ func (v *validator) decree() {
 		v.add("", RuleDecree, "%s --version: %v", bin, err)
 		return
 	}
-	major, minor, err := ParseDecreeVersion(out)
+	major, minor, version, err := ParseDecreeVersion(out)
 	if err != nil {
 		v.add("", RuleDecree, "%s --version: %v", bin, err)
 		return
 	}
 	if major < MinDecreeVersion[0] || (major == MinDecreeVersion[0] && minor < MinDecreeVersion[1]) {
-		v.add("", RuleDecree, "%s is version %d.%d, %d.%d or newer is required", bin, major, minor, MinDecreeVersion[0], MinDecreeVersion[1])
+		v.add("", RuleDecree, "%s is version %s, %s or newer is required", bin, version, minDecreeVersionText)
 		return
 	}
 

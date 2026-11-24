@@ -24,7 +24,7 @@ const queueFailed = "could not queue the message"
 var lookPath = exec.LookPath
 
 // emitResult is `decree emit --format json` (schema/v1/cli/emit.schema.json)
-// and `decree event --format json` (event.schema.json), which share a shape.
+// and `decree reply --format json` (reply.schema.json), which share a shape.
 type emitResult struct {
 	ID   string `json:"id"`
 	Path string `json:"path"`

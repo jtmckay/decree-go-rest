@@ -83,8 +83,8 @@ func TestSchemaRejects(t *testing.T) {
 	for _, src := range []string{
 		ok,
 		"endpoints: [{ path: /a, action: emit, message: { machine: m } }]\n",
-		"endpoints: [{ path: '/a/{w}', action: event, reply: { to: '{{w}}', event: review.ok } }]\n",
-		"endpoints: [{ path: '/a/{w}/{e}', action: event, body: none, reply: { to: '{{w}}', event: '{{e}}' } }]\n",
+		"endpoints: [{ path: '/a/{w}', action: reply, reply: { to: '{{w}}', event: review.ok } }]\n",
+		"endpoints: [{ path: '/a/{w}/{e}', action: reply, body: none, reply: { to: '{{w}}', event: '{{e}}' } }]\n",
 	} {
 		if err := s.Validate(yamlInstance(t, src)); err != nil {
 			t.Fatalf("valid config rejected: %v\n%s", err, src)
@@ -107,14 +107,15 @@ func TestSchemaRejects(t *testing.T) {
 		"list param":       "endpoints: [{ path: /a, message: { machine: m, params: { x: [1] } } }]\n",
 		"unknown endpoint": "endpoints: [{ path: /a, method: GET, message: { machine: m } }]\n",
 		"bad secret_env":   "secret_env: 'NOT A NAME'\n" + ok,
-		"bad action":       "endpoints: [{ path: /a, action: reply, message: { machine: m } }]\n",
+		"bad action":       "endpoints: [{ path: /a, action: answer, message: { machine: m } }]\n",
+		"action: event":    "endpoints: [{ path: '/a/{w}', action: event, reply: { to: '{{w}}', event: approve } }]\n",
 		"emit with reply":  "endpoints: [{ path: /a, message: { machine: m }, reply: { to: r, event: e } }]\n",
 		"emit no message":  "endpoints: [{ path: /a }]\n",
-		"event no reply":   "endpoints: [{ path: /a, action: event }]\n",
-		"event message":    "endpoints: [{ path: /a, action: event, message: { machine: m }, reply: { to: r, event: e } }]\n",
-		"event no to":      "endpoints: [{ path: /a, action: event, reply: { event: e } }]\n",
-		"bad event name":   "endpoints: [{ path: /a, action: event, reply: { to: r, event: Approve } }]\n",
-		"unknown reply":    "endpoints: [{ path: /a, action: event, reply: { to: r, event: e, note: x } }]\n",
+		"reply no reply":   "endpoints: [{ path: /a, action: reply }]\n",
+		"reply message":    "endpoints: [{ path: /a, action: reply, message: { machine: m }, reply: { to: r, event: e } }]\n",
+		"reply no to":      "endpoints: [{ path: /a, action: reply, reply: { event: e } }]\n",
+		"bad event name":   "endpoints: [{ path: /a, action: reply, reply: { to: r, event: Approve } }]\n",
+		"unknown reply":    "endpoints: [{ path: /a, action: reply, reply: { to: r, event: e, note: x } }]\n",
 		"old key":          config.RemovedKey + ": {}\n" + ok,
 	} {
 		if err := s.Validate(yamlInstance(t, src)); err == nil {

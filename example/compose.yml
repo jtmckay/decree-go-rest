@@ -45,5 +45,8 @@ services:
     # interrupted; give it time before the SIGKILL.
     stop_grace_period: 30s
     user: "1000:1000"
+    # decree 0.6 installs the project's plugins before the daemon runs;
+    # exec hands the shell's pid, and so the SIGTERM, to the daemon.
+    entrypoint: ["sh", "-c", "decree install && exec decree daemon --interval 2s"]
     volumes:
       - .:/project

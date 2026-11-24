@@ -38,7 +38,7 @@ endpoints:
 
   # Answering a run's question, such as an approval, deserves its own secret.
   - path: /approve/{wait_id}
-    action: event # reply to a run waiting in a person state
+    action: reply # reply to a run waiting in a reply state
     secret_env: DECREE_GO_REST_APPROVE_SECRET
     patterns: { wait_id: "[A-Za-z0-9._-]{1,128}" }
     body: optional # the note

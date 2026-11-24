@@ -1,14 +1,14 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "description": "The HTTP front door of a decree project: each endpoint queues a decree message, or replies to a run waiting for a person.",
+    "description": "The HTTP front door of a decree project: each endpoint queues a decree message, or replies to a run waiting in a reply state.",
     "title": "decree-go-rest",
     "version": "1"
   },
   "paths": {
     "/approve/{wait_id}": {
       "post": {
-        "description": "Runs `decree event {{wait_id}} approve [-m=<note>] --format json`, with the body as the note. Authenticated with its own bearer secret.",
+        "description": "Runs `decree reply {{wait_id}} approve [-m=<note>] --format json`, with the body as the note. Authenticated with its own bearer secret.",
         "parameters": [
           {
             "in": "path",
@@ -117,7 +117,7 @@
             "bearer": []
           }
         ],
-        "summary": "Reply approve to a run waiting for a person"
+        "summary": "Reply approve to a run waiting in a reply state"
       }
     },
     "/comfy/{type}/{name}": {

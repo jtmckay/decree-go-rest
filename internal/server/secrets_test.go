@@ -8,32 +8,32 @@ import (
 	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
-// withDefaultSecrets is the example config with its event endpoint on the
+// withDefaultSecrets is the example config with its reply endpoint on the
 // default secret.
 func withDefaultSecrets(t *testing.T) string {
 	t.Helper()
 	cfg := strings.Replace(exampleConfig(t), "    secret_env: DECREE_GO_REST_APPROVE_SECRET\n", "", 1)
 	if cfg == exampleConfig(t) {
-		t.Fatal("the example config gives its event endpoint no secret of its own")
+		t.Fatal("the example config gives its reply endpoint no secret of its own")
 	}
 	return cfg
 }
 
-// TestAcceptanceApproveOwnSecret: the example's event endpoint,
+// TestAcceptanceApproveOwnSecret: the example's reply endpoint,
 // /approve/{wait_id}, takes its own secret: the top-level one is a 401,
 // its own a 201, and its own opens no other endpoint.
 func TestAcceptanceApproveOwnSecret(t *testing.T) {
 	f := newFixture(t, exampleConfig(t))
 	ep := f.cfg.Endpoints[len(f.cfg.Endpoints)-1]
-	if ep.Path != "/approve/{wait_id}" || ep.Action != config.ActionEvent || ep.SecretEnv != "DECREE_GO_REST_APPROVE_SECRET" {
+	if ep.Path != "/approve/{wait_id}" || ep.Action != config.ActionReply || ep.SecretEnv != "DECREE_GO_REST_APPROVE_SECRET" {
 		t.Fatalf("the example's last endpoint is %+v", ep)
 	}
 	rec := f.do(t, req{path: "/approve/r.w3", bearer: secret, body: "ok"})
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("the top-level secret: status %d, body %s; want 401", rec.Code, rec.Body)
 	}
-	if n := len(f.stub.Invocations(t, "event")); n != 0 {
-		t.Errorf("decree event ran %d times on a rejected reply", n)
+	if n := len(f.stub.Invocations(t, "reply")); n != 0 {
+		t.Errorf("decree reply ran %d times on a rejected reply", n)
 	}
 	rec = f.do(t, req{path: "/approve/r.w3", bearer: approveSecret, body: "ok"})
 	if rec.Code != http.StatusCreated {
@@ -44,9 +44,9 @@ func TestAcceptanceApproveOwnSecret(t *testing.T) {
 	}
 }
 
-// TestEventFallsBackToDefaultSecret: an event endpoint without its own
+// TestReplyFallsBackToDefaultSecret: a reply endpoint without its own
 // secret_env takes the top-level secret, and nothing else.
-func TestEventFallsBackToDefaultSecret(t *testing.T) {
+func TestReplyFallsBackToDefaultSecret(t *testing.T) {
 	f := newFixture(t, withDefaultSecrets(t))
 	for _, c := range []struct {
 		r      req
@@ -75,7 +75,7 @@ func TestEventFallsBackToDefaultSecret(t *testing.T) {
 var otherDefault = strings.Repeat("e", 32)
 
 // TestNewRefusesMissingSecret: New, which runs after validation, still
-// refuses an event endpoint whose secret is missing or short rather than
+// refuses a reply endpoint whose secret is missing or short rather than
 // serve it with no secret.
 func TestNewRefusesMissingSecret(t *testing.T) {
 	f := newFixture(t, exampleConfig(t))

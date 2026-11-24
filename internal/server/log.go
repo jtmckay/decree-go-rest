@@ -81,7 +81,7 @@ func traceID(traceparent string) string {
 // §9).
 func (s *Server) LogRoutes() {
 	for _, e := range s.endpoints {
-		if e.action == config.ActionEvent {
+		if e.action == config.ActionReply {
 			s.Logger.Info("route", "method", http.MethodPost, "route", e.route, "action", e.action)
 			continue
 		}

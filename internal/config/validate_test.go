@@ -158,11 +158,11 @@ func TestValidateRules(t *testing.T) {
   - path: /a/b
     message: { machine: notify }
 `},
-		{name: "path: /runs/ is free", body: "endpoints:\n  - path: /runs/{a}/{b}/{c}\n    action: event\n    reply: { to: '{{a}}.{{b}}', event: '{{c}}' }\n"},
+		{name: "path: /runs/ is free", body: "endpoints:\n  - path: /runs/{a}/{b}/{c}\n    action: reply\n    reply: { to: '{{a}}.{{b}}', event: '{{c}}' }\n"},
 		{name: "path: /healthz reserved", body: "endpoints:\n  - path: /healthz\n    message: { machine: notify }\n", want: []want{{"/healthz", config.RulePath, "under /healthz, which is reserved"}}},
 		{name: "path: under /healthz reserved", body: "endpoints:\n  - path: /healthz/x\n    message: { machine: notify }\n", want: []want{{"/healthz/x", config.RulePath, "under /healthz, which is reserved"}}},
 		{name: "path: /openapi.json reserved", body: "endpoints:\n  - path: /openapi.json\n    message: { machine: notify }\n", want: []want{{"/openapi.json", config.RulePath, "under /openapi.json, which is reserved"}}},
-		{name: "path: /openapi.json reserved for an event endpoint", body: "endpoints:\n  - path: /openapi.json\n    action: event\n    reply: { to: r, event: approve }\n",
+		{name: "path: /openapi.json reserved for a reply endpoint", body: "endpoints:\n  - path: /openapi.json\n    action: reply\n    reply: { to: r, event: approve }\n",
 			want: []want{{"/openapi.json", config.RulePath, "under /openapi.json, which is reserved"}}},
 		{name: "path: wildcards beside the reserved paths pass", body: `endpoints:
   - path: /{a}
@@ -198,6 +198,13 @@ func TestValidateRules(t *testing.T) {
 		{name: "machine: missing key", body: "endpoints:\n  - path: /notify\n    message: { params: { title: x } }\n",
 			want: []want{{"/notify", config.RuleMachine, "message.machine is required"}}},
 		{name: "machine: no file", body: "endpoints:\n  - path: /notify\n    message: { machine: nope }\n", want: []want{{"/notify", config.RuleMachine, "machine nope: no file"}}},
+		{name: "machine: no file names the 0.6 layout", body: "endpoints:\n  - path: /notify\n    message: { machine: nope }\n",
+			want: []want{{"/notify", config.RuleMachine, filepath.Join(".decree", "machines", "nope", "machine.yml")}}},
+		{name: "machine: the 0.5 layout is not read", body: "endpoints:\n  - path: /notify\n    message: { machine: old, params: { title: x } }\n",
+			setup: func(t *testing.T, proj string, _ *decreetest.Stub) {
+				write(t, filepath.Join(proj, ".decree", "machines", "old.yml"), notifyMachine)
+			},
+			want: []want{{"/notify", config.RuleMachine, "machine old: no file"}}},
 		{name: "machine: placeholder", body: "endpoints:\n  - path: /n/{t}\n    message: { machine: '{{t}}', params: { title: '{{t}}' } }\n",
 			want: []want{{"/n/{t}", config.RuleMachine, "placeholder is not allowed"}}},
 		{name: "machine: path traversal", body: "endpoints:\n  - path: /notify\n    message: { machine: ../notify }\n",
@@ -222,44 +229,46 @@ func TestValidateRules(t *testing.T) {
 			},
 			want: []want{{"/notify", config.RuleParams, "cannot read its data"}}},
 
-		// Actions: emit (the default) and event, each with its required and
+		// Actions: emit (the default) and reply, each with its required and
 		// forbidden keys.
 		{name: "action: emit explicit", body: "endpoints:\n  - path: /notify\n    action: emit\n    message: { machine: notify }\n"},
-		{name: "action: unknown", body: "endpoints:\n  - path: /notify\n    action: reply\n    message: { machine: notify }\n",
-			want: []want{{"/notify", config.RuleConfig, `action: "reply" is not emit or event`}}},
+		{name: "action: unknown", body: "endpoints:\n  - path: /notify\n    action: answer\n    message: { machine: notify }\n",
+			want: []want{{"/notify", config.RuleConfig, `action: "answer" is not emit or reply`}}},
+		{name: "action: event names action: reply", body: "endpoints:\n  - path: /approve/{w}\n    action: event\n    reply: { to: '{{w}}', event: approve }\n",
+			want: []want{{"/approve/{w}", config.RuleConfig, "action: event is now action: reply"}}},
 		{name: "action: emit without message", body: "endpoints:\n  - path: /notify\n",
 			want: []want{{"/notify", config.RuleMachine, "action: emit requires message: { machine, params }"}}},
-		{name: "action: emit with reply names the event form", body: "endpoints:\n  - path: /a/{w}\n    message: { machine: notify, params: { title: '{{w}}' } }\n    reply: { to: '{{w}}', event: approve }\n",
-			want: []want{{"/a/{w}", config.RuleConfig, "reply is not allowed with action: emit, which queues message: { machine, params }; an endpoint that replies to a waiting run is action: event"}}},
+		{name: "action: emit with reply names the reply form", body: "endpoints:\n  - path: /a/{w}\n    message: { machine: notify, params: { title: '{{w}}' } }\n    reply: { to: '{{w}}', event: approve }\n",
+			want: []want{{"/a/{w}", config.RuleConfig, "reply is not allowed with action: emit, which queues message: { machine, params }; an endpoint that replies to a waiting run is action: reply"}}},
 		{name: "action: emit with only reply", body: "endpoints:\n  - path: /a/{w}\n    reply: { to: '{{w}}', event: approve }\n",
-			want: []want{{"/a/{w}", config.RuleConfig, "an endpoint that replies to a waiting run is action: event"}, {"/a/{w}", config.RuleMachine, "action: emit requires message"}}},
-		{name: "action: event valid", body: eventOK, env: map[string]string{"OTHER_SECRET": otherSecret}},
-		{name: "action: event, literal to, no parameters", body: "endpoints:\n  - path: /approve\n    action: event\n    reply: { to: r.w1, event: approve }\n"},
-		{name: "action: event, event from the path", body: "endpoints:\n  - path: /reply/{w}/{e}\n    action: event\n    reply: { to: '{{w}}', event: '{{e}}' }\n"},
-		{name: "action: event, dotted event", body: "endpoints:\n  - path: /approve/{w}\n    action: event\n    reply: { to: '{{w}}', event: review.ok_2 }\n"},
-		{name: "action: event with message names the emit form", body: "endpoints:\n  - path: /approve/{w}\n    action: event\n    message: { machine: notify, params: { title: '{{w}}' } }\n    reply: { to: '{{w}}', event: approve }\n",
-			want: []want{{"/approve/{w}", config.RuleConfig, "message is not allowed with action: event, which sends reply: { to, event }; an endpoint that queues a message is action: emit (the default)"}}},
-		{name: "action: event without reply", body: "endpoints:\n  - path: /approve\n    action: event\n",
-			want: []want{{"/approve", config.RuleConfig, "action: event requires reply: { to: '{{wait_id}}', event: <event> }"}}},
-		{name: "action: event, reply without to or event", body: "endpoints:\n  - path: /approve\n    action: event\n    reply: {}\n",
+			want: []want{{"/a/{w}", config.RuleConfig, "an endpoint that replies to a waiting run is action: reply"}, {"/a/{w}", config.RuleMachine, "action: emit requires message"}}},
+		{name: "action: reply valid", body: replyOK, env: map[string]string{"OTHER_SECRET": otherSecret}},
+		{name: "action: reply, literal to, no parameters", body: "endpoints:\n  - path: /approve\n    action: reply\n    reply: { to: r.w1, event: approve }\n"},
+		{name: "action: reply, event from the path", body: "endpoints:\n  - path: /reply/{w}/{e}\n    action: reply\n    reply: { to: '{{w}}', event: '{{e}}' }\n"},
+		{name: "action: reply, dotted event", body: "endpoints:\n  - path: /approve/{w}\n    action: reply\n    reply: { to: '{{w}}', event: review.ok_2 }\n"},
+		{name: "action: reply with message names the emit form", body: "endpoints:\n  - path: /approve/{w}\n    action: reply\n    message: { machine: notify, params: { title: '{{w}}' } }\n    reply: { to: '{{w}}', event: approve }\n",
+			want: []want{{"/approve/{w}", config.RuleConfig, "message is not allowed with action: reply, which sends reply: { to, event }; an endpoint that queues a message is action: emit (the default)"}}},
+		{name: "action: reply without reply", body: "endpoints:\n  - path: /approve\n    action: reply\n",
+			want: []want{{"/approve", config.RuleConfig, "action: reply requires reply: { to: '{{wait_id}}', event: <event> }"}}},
+		{name: "action: reply, reply without to or event", body: "endpoints:\n  - path: /approve\n    action: reply\n    reply: {}\n",
 			want: []want{{"/approve", config.RuleConfig, "reply.to is required"}, {"/approve", config.RuleConfig, "reply.event is required"}}},
-		{name: "action: event, bad literal event", body: "endpoints:\n  - path: /approve/{w}\n    action: event\n    reply: { to: '{{w}}', event: Approve }\n",
+		{name: "action: reply, bad literal event", body: "endpoints:\n  - path: /approve/{w}\n    action: reply\n    reply: { to: '{{w}}', event: Approve }\n",
 			want: []want{{"/approve/{w}", config.RuleConfig, `reply.event "Approve" does not match decree's event-name pattern`}}},
-		{name: "action: event, event ending in a dot", body: "endpoints:\n  - path: /approve/{w}\n    action: event\n    reply: { to: '{{w}}', event: approve. }\n",
+		{name: "action: reply, event ending in a dot", body: "endpoints:\n  - path: /approve/{w}\n    action: reply\n    reply: { to: '{{w}}', event: approve. }\n",
 			want: []want{{"/approve/{w}", config.RuleConfig, "event-name pattern"}}},
-		{name: "action: event, unknown placeholder", body: "endpoints:\n  - path: /approve/{w}\n    action: event\n    reply: { to: '{{w}}', event: '{{e}}' }\n",
+		{name: "action: reply, unknown placeholder", body: "endpoints:\n  - path: /approve/{w}\n    action: reply\n    reply: { to: '{{w}}', event: '{{e}}' }\n",
 			want: []want{{"/approve/{w}", config.RulePlaceholders, "reply.event: {{e}} is not a parameter of the path"}}},
-		{name: "action: event, parameter unused", body: "endpoints:\n  - path: /approve/{w}/{x}\n    action: event\n    reply: { to: '{{w}}', event: approve }\n",
+		{name: "action: reply, parameter unused", body: "endpoints:\n  - path: /approve/{w}/{x}\n    action: reply\n    reply: { to: '{{w}}', event: approve }\n",
 			want: []want{{"/approve/{w}/{x}", config.RulePlaceholders, "parameter {x} is not used in reply"}}},
-		{name: "action: event, machine and params not checked", body: "endpoints:\n  - path: /approve/{w}\n    action: event\n    reply: { to: '{{w}}', event: approve }\n",
+		{name: "action: reply, machine and params not checked", body: "endpoints:\n  - path: /approve/{w}\n    action: reply\n    reply: { to: '{{w}}', event: approve }\n",
 			setup: func(t *testing.T, proj string, _ *decreetest.Stub) {
 				if err := os.Remove(config.MachineFile(proj, "notify")); err != nil {
 					t.Fatal(err)
 				}
 			}},
-		{name: "action: event, own secret unset", body: "endpoints:\n  - path: /approve/{w}\n    action: event\n    secret_env: APPROVE_SECRET\n    reply: { to: '{{w}}', event: approve }\n",
+		{name: "action: reply, own secret unset", body: "endpoints:\n  - path: /approve/{w}\n    action: reply\n    secret_env: APPROVE_SECRET\n    reply: { to: '{{w}}', event: approve }\n",
 			env: map[string]string{"APPROVE_SECRET": "-"}, want: []want{{"/approve/{w}", config.RuleSecrets, "APPROVE_SECRET is not set"}}},
-		{name: "action: event, body rule checked", body: "endpoints:\n  - path: /approve\n    action: event\n    body: maybe\n    reply: { to: r, event: approve }\n",
+		{name: "action: reply, body rule checked", body: "endpoints:\n  - path: /approve\n    action: reply\n    body: maybe\n    reply: { to: r, event: approve }\n",
 			want: []want{{"/approve", config.RuleConfig, `"maybe" is not required, optional or none`}}},
 
 		// Step 6: secrets.
@@ -278,20 +287,26 @@ func TestValidateRules(t *testing.T) {
 		{name: "secrets: custom default name", body: "secret_env: MY_SECRET\n" + ok, env: map[string]string{"DECREE_GO_REST_SECRET": "-", "MY_SECRET": otherSecret}},
 		{name: "secrets: empty secret_env", body: "secret_env: ''\n" + ok,
 			want: []want{{"/notify", config.RuleSecrets, "no secret_env"}}},
-		{name: "secrets: event endpoint's own, default unset", body: "endpoints:\n  - path: /approve\n    action: event\n    secret_env: APPROVE_SECRET\n    reply: { to: r, event: approve }\n",
+		{name: "secrets: reply endpoint's own, default unset", body: "endpoints:\n  - path: /approve\n    action: reply\n    secret_env: APPROVE_SECRET\n    reply: { to: r, event: approve }\n",
 			env: map[string]string{"DECREE_GO_REST_SECRET": "-", "APPROVE_SECRET": otherSecret}},
-		{name: "secrets: event endpoint's own short", body: "endpoints:\n  - path: /approve\n    action: event\n    secret_env: APPROVE_SECRET\n    reply: { to: r, event: approve }\n",
+		{name: "secrets: reply endpoint's own short", body: "endpoints:\n  - path: /approve\n    action: reply\n    secret_env: APPROVE_SECRET\n    reply: { to: r, event: approve }\n",
 			env: map[string]string{"APPROVE_SECRET": goodSecret[:31]}, want: []want{{"/approve", config.RuleSecrets, "APPROVE_SECRET is 31 characters, at least 32"}}},
 
 		// Step 7: decree.
 		{name: "decree: newer version passes", body: ok, setup: func(t *testing.T, _ string, s *decreetest.Stub) { s.SetVersion(t, "decree 1.0.0") }},
 		{name: "decree: 0.10 passes", body: ok, setup: func(t *testing.T, _ string, s *decreetest.Stub) { s.SetVersion(t, "decree 0.10.1") }},
+		{name: "decree: 0.6.0 passes", body: ok, setup: func(t *testing.T, _ string, s *decreetest.Stub) { s.SetVersion(t, "decree 0.6.0") }},
+		{name: "decree: 0.6.0 release candidate passes", body: ok, setup: func(t *testing.T, _ string, s *decreetest.Stub) { s.SetVersion(t, "decree 0.6.0-rc.4") }},
+		{name: "decree: 0.5.0 names 0.6.0", body: ok, setup: func(t *testing.T, _ string, s *decreetest.Stub) { s.SetVersion(t, "decree 0.5.0") },
+			want: []want{{"", config.RuleDecree, "is version 0.5.0, 0.6.0 or newer is required"}}},
+		{name: "decree: 0.5 release candidate", body: ok, setup: func(t *testing.T, _ string, s *decreetest.Stub) { s.SetVersion(t, "decree 0.5.0-beta.13") },
+			want: []want{{"", config.RuleDecree, "is version 0.5.0-beta.13, 0.6.0 or newer is required"}}},
 		{name: "decree: old version", body: ok, setup: func(t *testing.T, _ string, s *decreetest.Stub) { s.SetVersion(t, "decree 0.4.9") },
-			want: []want{{"", config.RuleDecree, "is version 0.4, 0.5 or newer is required"}}},
+			want: []want{{"", config.RuleDecree, "is version 0.4.9, 0.6.0 or newer is required"}}},
 		{name: "decree: unreadable version", body: ok, setup: func(t *testing.T, _ string, s *decreetest.Stub) { s.SetVersion(t, "decree") },
 			want: []want{{"", config.RuleDecree, "no version"}}},
 		{name: "decree: invalid project", body: ok, setup: func(t *testing.T, _ string, s *decreetest.Stub) { s.SetCheck(t, decreetest.InvalidCheck, 1) },
-			want: []want{{"", config.RuleDecree, "check: machines/bad.yml: line 1: missing field `description`"}}},
+			want: []want{{"", config.RuleDecree, "check: machines/bad/machine.yml: line 1: missing field `description`"}}},
 		{name: "decree: check prints no JSON", body: ok, setup: func(t *testing.T, _ string, s *decreetest.Stub) { s.SetCheck(t, "", 1) },
 			want: []want{{"", config.RuleDecree, "error: decree check found errors"}}},
 		{name: "decree: binary missing", body: ok, setup: func(t *testing.T, _ string, s *decreetest.Stub) {
@@ -323,10 +338,10 @@ func TestValidateRules(t *testing.T) {
 	}
 }
 
-// eventOK is a valid event endpoint with its own secret, as the example's.
-const eventOK = `endpoints:
+// replyOK is a valid reply endpoint with its own secret, as the example's.
+const replyOK = `endpoints:
   - path: /approve/{wait_id}
-    action: event
+    action: reply
     secret_env: OTHER_SECRET
     patterns: { wait_id: '[A-Za-z0-9._-]{1,128}' }
     body: optional
@@ -361,7 +376,7 @@ func TestValidateReportsEveryErrorTogether(t *testing.T) {
 		{"/n/{t}", config.RuleSecrets, "is 5 characters"},
 		{"/m", config.RuleSecrets, "is 5 characters"},
 		{"/p", config.RuleSecrets, "is 5 characters"},
-		{"", config.RuleDecree, "0.5 or newer"},
+		{"", config.RuleDecree, "0.6.0 or newer"},
 	})
 	for _, e := range errs {
 		s := e.Error()
@@ -419,13 +434,23 @@ func TestDecreeOnPathAndRelative(t *testing.T) {
 }
 
 func TestParseDecreeVersion(t *testing.T) {
-	for in, want := range map[string][2]int{"decree 0.5.0\n": {0, 5}, "decree 0.12": {0, 12}, "decree 1.2.3-rc1": {1, 2}} {
-		ma, mi, err := config.ParseDecreeVersion(in)
-		if err != nil || [2]int{ma, mi} != want {
-			t.Errorf("ParseDecreeVersion(%q) = %d.%d, %v", in, ma, mi, err)
+	type v struct {
+		major, minor int
+		text         string
+	}
+	for in, want := range map[string]v{
+		"decree 0.6.0\n":       {0, 6, "0.6.0"},
+		"decree 0.6.0-rc.4\n":  {0, 6, "0.6.0-rc.4"},
+		"decree 0.12":          {0, 12, "0.12"},
+		"decree 1.2.3-rc1":     {1, 2, "1.2.3-rc1"},
+		"decree 0.5.0 (abc12)": {0, 5, "0.5.0"},
+	} {
+		ma, mi, text, err := config.ParseDecreeVersion(in)
+		if err != nil || (v{ma, mi, text}) != want {
+			t.Errorf("ParseDecreeVersion(%q) = %d.%d %q, %v; want %v", in, ma, mi, text, err, want)
 		}
 	}
-	if _, _, err := config.ParseDecreeVersion("decree"); err == nil {
+	if _, _, _, err := config.ParseDecreeVersion("decree"); err == nil {
 		t.Error("ParseDecreeVersion without a version succeeded")
 	}
 }

@@ -24,12 +24,12 @@ type endpoint struct {
 	secret []byte
 	params []pathParam
 	body   string
-	// action is config.ActionEmit or config.ActionEvent.
+	// action is config.ActionEmit or config.ActionReply.
 	action string
 	// machine and message are what an emit endpoint queues.
 	machine string
 	message []messageParam
-	// to and event are what an event endpoint replies, each possibly
+	// to and event are what a reply endpoint replies, each possibly
 	// holding placeholders.
 	to, event string
 }
@@ -65,9 +65,9 @@ func newEndpoint(c *config.Config, ce config.Endpoint) (*endpoint, error) {
 		e.params = append(e.params, pathParam{name: name, re: re})
 	}
 	switch ce.Action {
-	case config.ActionEvent:
+	case config.ActionReply:
 		if ce.Reply == nil {
-			return nil, errors.New("action: event without reply")
+			return nil, errors.New("action: reply without reply")
 		}
 		e.to, e.event = ce.Reply.To, ce.Reply.Event
 		return e, nil
@@ -115,7 +115,7 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *endpoi
 		writeError(w, status, msg)
 		return
 	}
-	if e.action == config.ActionEvent {
+	if e.action == config.ActionReply {
 		s.reply(w, r, e, values, body)
 		return
 	}
