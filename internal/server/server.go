@@ -88,11 +88,13 @@ func newServer(c *config.Config, b *budgets, opts Options) (*Server, error) {
 			return nil, fmt.Errorf("endpoint %s: %w", ce.Path, err)
 		}
 		s.endpoints = append(s.endpoints, e)
-		if err := handle(s.mux, http.MethodPost+" "+ce.Path, func(w http.ResponseWriter, r *http.Request) {
-			logged(r).route = e.route
-			s.serveEndpoint(w, r, e)
-		}); err != nil {
-			return nil, fmt.Errorf("endpoint %s: %w", ce.Path, err)
+		for _, pattern := range ce.Routes() {
+			if err := handle(s.mux, pattern, func(w http.ResponseWriter, r *http.Request) {
+				logged(r).route = e.route
+				s.serveEndpoint(w, r, e)
+			}); err != nil {
+				return nil, fmt.Errorf("endpoint %s: %w", ce.Path, err)
+			}
 		}
 	}
 	if err := s.handleReserved(c); err != nil {
@@ -177,6 +179,8 @@ func (s *Server) allowed(r *http.Request) (route, allow string) {
 			continue
 		}
 		_, route, _ = strings.Cut(pattern, " ")
+		// A read endpoint's <path>/{rest...} route logs as <path>.
+		route = strings.TrimSuffix(route, "/{"+config.RestParam+"...}")
 		methods = append(methods, m)
 		if m == http.MethodGet {
 			methods = append(methods, http.MethodHead)

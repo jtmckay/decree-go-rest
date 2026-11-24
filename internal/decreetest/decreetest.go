@@ -16,8 +16,8 @@ import (
 const ValidCheck = `{"errors":[],"valid":true,"warnings":[]}`
 
 // InvalidCheck is `decree check --format json` for a project with one
-// error, as decree 0.5 prints it.
-const InvalidCheck = `{"errors":[{"file":"machines/bad.yml","line":1,"message":"missing field ` + "`description`" + `","rule":null}],"valid":false,"warnings":[]}`
+// error, as decree 0.6 prints it (schema/v1/cli/check.schema.json).
+const InvalidCheck = `{"errors":[{"file":"machines/bad/machine.yml","line":1,"message":"missing field ` + "`description`" + `","rule":null}],"valid":false,"warnings":[]}`
 
 // Stub is a stub decree in Dir.
 type Stub struct {
@@ -65,7 +65,7 @@ check)
 	if [ "$code" != 0 ]; then echo "error: decree check found errors" >&2; fi
 	exit "$code"
 	;;
-event)
+reply)
 	record "$@"
 	answer "$cmd"
 	;;
@@ -114,7 +114,7 @@ echo "error: the stub does not implement $1" >&2
 exit 2
 `
 
-// New writes a stub decree that reports version 0.5.0 and a valid project.
+// New writes a stub decree that reports version 0.6.0 and a valid project.
 func New(t testing.TB) *Stub {
 	t.Helper()
 	dir := t.TempDir()
@@ -122,12 +122,12 @@ func New(t testing.TB) *Stub {
 	if err := os.WriteFile(s.Path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	s.SetVersion(t, "decree 0.5.0")
+	s.SetVersion(t, "decree 0.6.0")
 	s.SetCheck(t, ValidCheck, 0)
 	s.SetEmit(t, 0, "")
 	s.write(t, "emit.json", "")
 	s.write(t, "emit.sleep", "")
-	s.SetEvent(t, 0, EventReply, "")
+	s.SetReply(t, 0, ReplyOutput, "")
 	s.write(t, "daemon.term", "")
 	s.write(t, "daemon.ticks", "")
 	return s
@@ -135,7 +135,7 @@ func New(t testing.TB) *Stub {
 
 // SetEmit sets the exit code of `decree emit` and, when it is not 0, what it
 // prints on stderr. With exit 0 the stub prints a new id and path, as
-// decree 0.5 does, unless SetEmitOutput replaced them.
+// decree 0.6 does (schema/v1/cli/emit.schema.json), unless SetEmitOutput replaced them.
 func (s *Stub) SetEmit(t testing.TB, exit int, stderr string) {
 	t.Helper()
 	s.write(t, "emit.exit", strconv.Itoa(exit)+"\n")
@@ -155,19 +155,20 @@ func (s *Stub) SetEmitSleep(t testing.TB, d string) {
 	s.write(t, "emit.sleep", d)
 }
 
-// EventReply is `decree event --format json` for a queued reply, as decree
-// 0.5 prints it; the stub prints it by default.
-const EventReply = `{
+// ReplyOutput is `decree reply --format json` for a queued reply, as decree
+// 0.6 prints it (schema/v1/cli/reply.schema.json); the stub prints it by
+// default.
+const ReplyOutput = `{
   "id": "20261005T043200Z-3d4e5f",
   "path": ".decree/inbox/20261005T043200Z-3d4e5f.md"
 }
 `
 
-// SetEvent sets what `decree event` prints on stdout and stderr, and its
+// SetReply sets what `decree reply` prints on stdout and stderr, and its
 // exit code. stdout is printed only on exit 0, stderr only otherwise.
-func (s *Stub) SetEvent(t testing.TB, exit int, stdout, stderr string) {
+func (s *Stub) SetReply(t testing.TB, exit int, stdout, stderr string) {
 	t.Helper()
-	s.setAnswer(t, "event", exit, stdout, stderr)
+	s.setAnswer(t, "reply", exit, stdout, stderr)
 }
 
 func (s *Stub) setAnswer(t testing.TB, cmd string, exit int, stdout, stderr string) {
@@ -178,13 +179,13 @@ func (s *Stub) setAnswer(t testing.TB, cmd string, exit int, stdout, stderr stri
 	s.SetSleep(t, cmd, "")
 }
 
-// SetSleep makes `decree <cmd>`, such as event, sleep before it answers; d is an argument of sleep(1), such as "0.5" or "" for none.
+// SetSleep makes `decree <cmd>`, such as reply, sleep before it answers; d is an argument of sleep(1), such as "0.5" or "" for none.
 func (s *Stub) SetSleep(t testing.TB, cmd, d string) {
 	t.Helper()
 	s.write(t, cmd+".sleep", d)
 }
 
-// Emit is one recorded `decree emit` or `decree event`.
+// Emit is one recorded `decree emit` or `decree reply`.
 type Emit = Invocation
 
 // Invocation is one recorded call of a decree command.
@@ -220,7 +221,7 @@ func (s *Stub) Emits(t testing.TB) []Emit {
 	return s.Invocations(t, "emit")
 }
 
-// Invocations returns every recorded call of cmd ("emit" or "event"), in order.
+// Invocations returns every recorded call of cmd ("emit" or "reply"), in order.
 func (s *Stub) Invocations(t testing.TB, cmd string) []Invocation {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(s.Dir, cmd+".calls"))

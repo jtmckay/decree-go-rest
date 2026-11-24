@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-// eventConfig has an emit endpoint and event endpoints: /approve/{wait_id}
+// replyConfig has an emit endpoint and reply endpoints: /approve/{wait_id}
 // on its own secret, as the example's, and /reply/{w}/{e}, whose event
 // comes from the path, on the default one.
-const eventConfig = `endpoints:
+const replyConfig = `endpoints:
   - path: /notify
     message: { machine: notify }
   - path: /approve/{wait_id}
-    action: event
+    action: reply
     secret_env: DECREE_GO_REST_APPROVE_SECRET
     patterns: { wait_id: '[A-Za-z0-9._-]{1,128}' }
     body: optional
@@ -23,39 +23,39 @@ const eventConfig = `endpoints:
       to: '{{wait_id}}'
       event: approve
   - path: /reply/{w}/{e}
-    action: event
+    action: reply
     patterns: { e: '[a-z]+' }
     reply: { to: '{{w}}', event: '{{e}}' }
   - path: /strict/{w}
-    action: event
+    action: reply
     body: required
     reply: { to: '{{w}}', event: approve }
 `
 
-// TestEventArgv: an event endpoint runs decree event <to> <event>, with
+// TestReplyArgv: a reply endpoint runs decree reply <to> <event>, with
 // the note as one argv entry, -m=<body>, unchanged, and no -m for an
 // empty body. Nothing goes to stdin.
-func TestEventArgv(t *testing.T) {
+func TestReplyArgv(t *testing.T) {
 	const waitID = "20261005T043125Z-0a1b2c.w3"
 	cases := []struct {
 		name string
 		req  req
 		want []string
 	}{
-		{"no note", req{path: "/approve/" + waitID}, []string{"event", waitID, "approve", "--format", "json"}},
-		{"note", req{path: "/approve/" + waitID, body: "looks good"}, []string{"event", waitID, "approve", "-m=looks good", "--format", "json"}},
-		{"starts with -", req{path: "/approve/w", body: "-x note"}, []string{"event", "w", "approve", "-m=-x note", "--format", "json"}},
-		{"an option", req{path: "/approve/w", body: "--format"}, []string{"event", "w", "approve", "-m=--format", "--format", "json"}},
-		{"=", req{path: "/approve/w", body: "=x"}, []string{"event", "w", "approve", "-m==x", "--format", "json"}},
-		{"no newline added", req{path: "/approve/w", body: "two\nlines"}, []string{"event", "w", "approve", "-m=two\nlines", "--format", "json"}},
-		{"trailing newline kept", req{path: "/approve/w", body: "line\n"}, []string{"event", "w", "approve", "-m=line\n", "--format", "json"}},
-		{"whitespace is a note", req{path: "/approve/w", body: " "}, []string{"event", "w", "approve", "-m= ", "--format", "json"}},
-		{"event from the path", req{path: "/reply/r.w1/reject", bearer: secret}, []string{"event", "r.w1", "reject", "--format", "json"}},
-		{"trailing slash", req{path: "/approve/w/"}, []string{"event", "w", "approve", "--format", "json"}},
+		{"no note", req{path: "/approve/" + waitID}, []string{"reply", waitID, "approve", "--format", "json"}},
+		{"note", req{path: "/approve/" + waitID, body: "looks good"}, []string{"reply", waitID, "approve", "-m=looks good", "--format", "json"}},
+		{"starts with -", req{path: "/approve/w", body: "-x note"}, []string{"reply", "w", "approve", "-m=-x note", "--format", "json"}},
+		{"an option", req{path: "/approve/w", body: "--format"}, []string{"reply", "w", "approve", "-m=--format", "--format", "json"}},
+		{"=", req{path: "/approve/w", body: "=x"}, []string{"reply", "w", "approve", "-m==x", "--format", "json"}},
+		{"no newline added", req{path: "/approve/w", body: "two\nlines"}, []string{"reply", "w", "approve", "-m=two\nlines", "--format", "json"}},
+		{"trailing newline kept", req{path: "/approve/w", body: "line\n"}, []string{"reply", "w", "approve", "-m=line\n", "--format", "json"}},
+		{"whitespace is a note", req{path: "/approve/w", body: " "}, []string{"reply", "w", "approve", "-m= ", "--format", "json"}},
+		{"event from the path", req{path: "/reply/r.w1/reject", bearer: secret}, []string{"reply", "r.w1", "reject", "--format", "json"}},
+		{"trailing slash", req{path: "/approve/w/"}, []string{"reply", "w", "approve", "--format", "json"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			f := newFixture(t, eventConfig)
+			f := newFixture(t, replyConfig)
 			if c.req.bearer == "" {
 				c.req.bearer = approveSecret
 			}
@@ -63,9 +63,9 @@ func TestEventArgv(t *testing.T) {
 			if rec.Code != http.StatusCreated {
 				t.Fatalf("status %d, body %s; want 201", rec.Code, rec.Body)
 			}
-			calls := f.stub.Invocations(t, "event")
+			calls := f.stub.Invocations(t, "reply")
 			if len(calls) != 1 {
-				t.Fatalf("%d event calls, want 1", len(calls))
+				t.Fatalf("%d reply calls, want 1", len(calls))
 			}
 			if got := calls[0].Args; strings.Join(got, "\x00") != strings.Join(c.want, "\x00") {
 				t.Errorf("argv %q, want %q", got, c.want)
@@ -83,10 +83,10 @@ func TestEventArgv(t *testing.T) {
 	}
 }
 
-// TestEventCreated: a 201 carries decree's id and path, and the to and
+// TestReplyCreated: a 201 carries decree's id and path, and the to and
 // event replied.
-func TestEventCreated(t *testing.T) {
-	f := newFixture(t, eventConfig)
+func TestReplyCreated(t *testing.T) {
+	f := newFixture(t, replyConfig)
 	rec := f.do(t, req{path: "/approve/r.w3", bearer: approveSecret, body: "ok"})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status %d, body %s; want 201", rec.Code, rec.Body)
@@ -114,8 +114,8 @@ func TestEventCreated(t *testing.T) {
 	}
 }
 
-func TestEventStatuses(t *testing.T) {
-	cfg := "limits: { max_body_bytes: 16 }\n" + eventConfig
+func TestReplyStatuses(t *testing.T) {
+	cfg := "limits: { max_body_bytes: 16 }\n" + replyConfig
 	long := strings.Repeat("a", 129)
 	cases := []struct {
 		name   string
@@ -130,22 +130,22 @@ func TestEventStatuses(t *testing.T) {
 		{name: "note at the cap", req: req{path: "/approve/r", bearer: approveSecret, body: strings.Repeat("x", 16)}, status: 201, runs: true},
 		{name: "wait id at its limit", req: req{path: "/approve/" + long[1:], bearer: approveSecret}, status: 201, runs: true},
 		{name: "not waiting", setup: func(t *testing.T, f *fixture) {
-			f.stub.SetEvent(t, 1, "", "error: run r is not waiting\n")
+			f.stub.SetReply(t, 1, "", "error: run r is not waiting\n")
 		}, req: req{path: "/approve/r", bearer: approveSecret}, status: 409, msg: "run r is not waiting", runs: true},
 		{name: "exit 1, no stderr", setup: func(t *testing.T, f *fixture) {
-			f.stub.SetEvent(t, 1, "", "")
+			f.stub.SetReply(t, 1, "", "")
 		}, req: req{path: "/approve/r", bearer: approveSecret}, status: 409, msg: "the run does not accept this reply", runs: true},
 		{name: "exit 2", setup: func(t *testing.T, f *fixture) {
-			f.stub.SetEvent(t, 2, "", "error: secret detail\n")
+			f.stub.SetReply(t, 2, "", "error: secret detail\n")
 		}, req: req{path: "/approve/r", bearer: approveSecret}, status: 500, msg: replyFailed, runs: true},
 		{name: "unreadable output", setup: func(t *testing.T, f *fixture) {
-			f.stub.SetEvent(t, 0, "Usage: decree event\n", "")
+			f.stub.SetReply(t, 0, "Usage: decree reply\n", "")
 		}, req: req{path: "/approve/r", bearer: approveSecret}, status: 500, msg: replyFailed, runs: true},
 		{name: "output without id", setup: func(t *testing.T, f *fixture) {
-			f.stub.SetEvent(t, 0, `{"path": ".decree/inbox/x.md"}`, "")
+			f.stub.SetReply(t, 0, `{"path": ".decree/inbox/x.md"}`, "")
 		}, req: req{path: "/approve/r", bearer: approveSecret}, status: 500, msg: replyFailed, runs: true},
 		{name: "timeout", setup: func(t *testing.T, f *fixture) {
-			f.stub.SetSleep(t, "event", "5")
+			f.stub.SetSleep(t, "reply", "5")
 			f.srv.EmitTimeout = 200 * time.Millisecond
 		}, req: req{path: "/approve/r", bearer: approveSecret}, status: 500, msg: replyFailed, runs: true},
 		{name: "note too large", req: req{path: "/approve/r", bearer: approveSecret, body: strings.Repeat("x", 17)}, status: 413, msg: "the body is larger than 16 bytes"},
@@ -177,18 +177,18 @@ func TestEventStatuses(t *testing.T) {
 			if got := rec.Header().Get("Allow"); got != c.allow {
 				t.Errorf("Allow = %q, want %q", got, c.allow)
 			}
-			if n := len(f.stub.Invocations(t, "event")); (n > 0) != c.runs {
-				t.Errorf("decree event ran %d times", n)
+			if n := len(f.stub.Invocations(t, "reply")); (n > 0) != c.runs {
+				t.Errorf("decree reply ran %d times", n)
 			}
 		})
 	}
 }
 
-// TestEventOwnSecret: an event endpoint with its own secret takes that
+// TestReplyOwnSecret: a reply endpoint with its own secret takes that
 // secret only: the top-level one gets 401, and its own opens no other
 // endpoint.
-func TestEventOwnSecret(t *testing.T) {
-	f := newFixture(t, eventConfig)
+func TestReplyOwnSecret(t *testing.T) {
+	f := newFixture(t, replyConfig)
 	for _, c := range []struct {
 		r    req
 		want int
@@ -207,16 +207,16 @@ func TestEventOwnSecret(t *testing.T) {
 			t.Errorf("POST %s: no WWW-Authenticate", c.r.path)
 		}
 	}
-	if n := len(f.stub.Invocations(t, "event")); n != 2 {
-		t.Errorf("%d event calls, want 2", n)
+	if n := len(f.stub.Invocations(t, "reply")); n != 2 {
+		t.Errorf("%d reply calls, want 2", n)
 	}
 }
 
-// TestEventEnvironment: decree event gets the environment of SPEC.md §4
+// TestReplyEnvironment: decree reply gets the environment of SPEC.md §4
 // step 6: no DECREE_*, and the request's valid trace context.
-func TestEventEnvironment(t *testing.T) {
+func TestReplyEnvironment(t *testing.T) {
 	const tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-	f := newFixture(t, eventConfig)
+	f := newFixture(t, replyConfig)
 	t.Setenv("DECREE_RUN_ID", "20261005T000000Z-abcdef")
 	t.Setenv("TRACEPARENT", "00-11111111111111111111111111111111-2222222222222222-01")
 	t.Setenv("KEPT_VAR", "yes")
@@ -225,7 +225,7 @@ func TestEventEnvironment(t *testing.T) {
 			t.Fatalf("status %d, want 201", rec.Code)
 		}
 	}
-	calls := f.stub.Invocations(t, "event")
+	calls := f.stub.Invocations(t, "reply")
 	if len(calls) != 2 {
 		t.Fatalf("%d calls, want 2", len(calls))
 	}
@@ -249,13 +249,13 @@ func TestEventEnvironment(t *testing.T) {
 	}
 }
 
-// TestEventLogged: one request record with the route pattern and the
+// TestReplyLogged: one request record with the route pattern and the
 // reply's id, never the wait id, the event or the note.
-func TestEventLogged(t *testing.T) {
-	f := newFixture(t, eventConfig)
+func TestReplyLogged(t *testing.T) {
+	f := newFixture(t, replyConfig)
 	logs := captureLogs(f.srv)
 	f.do(t, req{path: "/reply/secret-wait-id/secretevent", bearer: secret, body: "secret note"})
-	f.stub.SetEvent(t, 2, "", "")
+	f.stub.SetReply(t, 2, "", "")
 	f.do(t, req{path: "/reply/secret-wait-id/secretevent", bearer: secret, body: "secret note"})
 	recs := requestRecords(t, logs)
 	if len(recs) != 2 {
@@ -267,7 +267,7 @@ func TestEventLogged(t *testing.T) {
 	if m := recs[1]; m["status"] != 500.0 {
 		t.Errorf("record %v", m)
 	}
-	if !strings.Contains(logs.String(), "decree event failed") {
+	if !strings.Contains(logs.String(), "decree reply failed") {
 		t.Errorf("the failure is not logged:\n%s", logs)
 	}
 	if strings.Contains(logs.String(), "secret") {
@@ -275,9 +275,9 @@ func TestEventLogged(t *testing.T) {
 	}
 }
 
-// TestEventBudgets: an event endpoint spends from the same budgets as an
+// TestReplyBudgets: a reply endpoint spends from the same budgets as an
 // emit endpoint (SPEC.md §6).
-func TestEventBudgets(t *testing.T) {
+func TestReplyBudgets(t *testing.T) {
 	f := newFixture(t, limitsConfig(t, 2, 2))
 	f.clock()
 	ok := req{path: "/approve/r.w1", bearer: approveSecret, body: "note"}
@@ -303,9 +303,9 @@ func TestEventBudgets(t *testing.T) {
 	}
 }
 
-// TestEvent400SpendsRequestBudget: a parameter outside its pattern from an
+// TestReply400SpendsRequestBudget: a parameter outside its pattern from an
 // authenticated caller spends rate_max, not the failure budget.
-func TestEvent400SpendsRequestBudget(t *testing.T) {
+func TestReply400SpendsRequestBudget(t *testing.T) {
 	f := newFixture(t, limitsConfig(t, 60, 1))
 	f.clock()
 	for i := 0; i < 3; i++ {
@@ -331,7 +331,7 @@ endpoints:
     body: optional
     message: { machine: notify, params: { title: '{{a}}' } }
   - path: /{a}/{b}
-    action: event
+    action: reply
     reply: { to: '{{a}}', event: '{{b}}' }
 `
 	f := newFixture(t, cfg)

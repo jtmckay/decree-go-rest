@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-// TestNoOldName: no file outside .decree/migrations/ and .decree/runs/,
-// which are history, names the project by its old name. The names are
+// TestNoOldName: no file outside .decree/runs/ and the develop machine's
+// orders (.decree/machines/develop/order/), which are history, names the project by its old name. The names are
 // built here, so this file does not match itself.
 func TestNoOldName(t *testing.T) {
 	old := []string{"decree" + "-api", "DECREE" + "_API_"}
@@ -21,9 +21,9 @@ func TestNoOldName(t *testing.T) {
 		t.Fatal(err)
 	}
 	skip := map[string]bool{
-		".git":                                 true,
-		filepath.Join(".decree", "migrations"): true,
-		filepath.Join(".decree", "runs"):       true,
+		".git":                           true,
+		filepath.Join(".decree", "runs"): true,
+		filepath.Join(".decree", "machines", "develop", "order"): true,
 	}
 	checked := 0
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -99,8 +99,8 @@ func TestAcceptanceBuiltBinaryChecksExample(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("decree-go-rest -check: %v\nstdout %q\nstderr %q", err, stdout.String(), stderr.String())
 	}
-	if got := stdout.String(); got != "config ok: 4 endpoints\n" {
-		t.Errorf("stdout %q, want \"config ok: 4 endpoints\\n\"", got)
+	if got := stdout.String(); got != "config ok: 5 endpoints\n" {
+		t.Errorf("stdout %q, want \"config ok: 5 endpoints\\n\"", got)
 	}
 	if calls := stub.Calls(t); len(calls) != 2 {
 		t.Errorf("decree calls = %q, want --version and check", calls)

@@ -184,7 +184,8 @@ func testLogRoutes(t *testing.T, openapi bool) {
 		"POST /notify -> notify [emit]",
 		"POST /notify/{title} -> notify [emit]",
 		"POST /comfy/{type}/{name} -> comfy_image [emit]",
-		"POST /approve/{wait_id} [event]",
+		"POST /approve/{wait_id} [reply]",
+		"GET /leases/by-id/{id} -> gpu_lease [read]",
 		"GET /healthz (reserved)",
 		"GET /openapi.json (reserved)",
 	}

@@ -24,14 +24,19 @@ type endpoint struct {
 	secret []byte
 	params []pathParam
 	body   string
-	// action is config.ActionEmit or config.ActionEvent.
+	// action is config.ActionEmit, config.ActionReply or
+	// config.ActionRead.
 	action string
 	// machine and message are what an emit endpoint queues.
 	machine string
 	message []messageParam
-	// to and event are what an event endpoint replies, each possibly
+	// to and event are what a reply endpoint replies, each possibly
 	// holding placeholders.
 	to, event string
+	// machine, stateDir and readPath are what a read endpoint serves:
+	// readPath, possibly holding placeholders, under stateDir, the
+	// machine's state/ folder.
+	stateDir, readPath string
 }
 
 type pathParam struct {
@@ -65,9 +70,17 @@ func newEndpoint(c *config.Config, ce config.Endpoint) (*endpoint, error) {
 		e.params = append(e.params, pathParam{name: name, re: re})
 	}
 	switch ce.Action {
-	case config.ActionEvent:
+	case config.ActionRead:
+		if ce.Read == nil {
+			return nil, errors.New("action: read without read")
+		}
+		e.machine = ce.Read.Machine
+		e.stateDir = config.StateDir(c.ProjectDir, ce.Read.Machine)
+		e.readPath = ce.Read.Path
+		return e, nil
+	case config.ActionReply:
 		if ce.Reply == nil {
-			return nil, errors.New("action: event without reply")
+			return nil, errors.New("action: reply without reply")
 		}
 		e.to, e.event = ce.Reply.To, ce.Reply.Event
 		return e, nil
@@ -109,13 +122,17 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *endpoi
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
+	if e.action == config.ActionRead {
+		s.serveRead(w, r, e, values)
+		return
+	}
 
 	body, status, msg := s.readBody(w, r, e.body)
 	if status != 0 {
 		writeError(w, status, msg)
 		return
 	}
-	if e.action == config.ActionEvent {
+	if e.action == config.ActionReply {
 		s.reply(w, r, e, values, body)
 		return
 	}

@@ -105,17 +105,17 @@ endpoints:
 	}
 }
 
-// TestEventEndpointDefaults: an event endpoint's body defaults to
+// TestReplyEndpointDefaults: a reply endpoint's body defaults to
 // optional, and a parameter it uses in reply.to defaults to the wait-id
 // pattern, since wait ids contain dots.
-func TestEventEndpointDefaults(t *testing.T) {
+func TestReplyEndpointDefaults(t *testing.T) {
 	c, err := Parse([]byte(`endpoints:
   - path: /approve/{wait_id}/{ev}/{x}
-    action: event
+    action: reply
     patterns: { x: '[a-z]' }
     reply: { to: '{{wait_id}}', event: '{{ev}}{{x}}' }
   - path: /strict/{w}
-    action: event
+    action: reply
     body: required
     reply: { to: 'r.{{w}}', event: approve }
   - path: /emit/{w}
@@ -129,12 +129,12 @@ func TestEventEndpointDefaults(t *testing.T) {
 		name      string
 		got, want any
 	}{
-		{"event action", ev.Action, ActionEvent},
-		{"event body", ev.Body, BodyOptional},
-		{"event reply.to", ev.Reply.To, "{{wait_id}}"},
-		{"event message", ev.Message == nil, true},
+		{"reply action", ev.Action, ActionReply},
+		{"reply body", ev.Body, BodyOptional},
+		{"reply reply.to", ev.Reply.To, "{{wait_id}}"},
+		{"reply message", ev.Message == nil, true},
 		{"pattern of a parameter in to", ev.ParamPattern("wait_id"), WaitIDPattern},
-		{"pattern of a parameter in event", ev.ParamPattern("ev"), DefaultParamPattern},
+		{"pattern of a parameter in reply.event", ev.ParamPattern("ev"), DefaultParamPattern},
 		{"configured pattern", ev.ParamPattern("x"), "[a-z]"},
 		{"explicit body", strict.Body, BodyRequired},
 		{"pattern of a parameter inside to", strict.ParamPattern("w"), WaitIDPattern},
@@ -213,8 +213,8 @@ func TestParseErrors(t *testing.T) {
 		"unknown nested key":    "daemon: { enable: true }\nendpoints: []\n",
 		"unknown endpoint key":  "endpoints:\n  - path: /a\n    methods: [GET]\n    message: { machine: m }\n",
 		"unknown message key":   "endpoints:\n  - path: /a\n    message: { machine: m, routine: x }\n",
-		"unknown reply key":     "endpoints:\n  - path: /a\n    action: event\n    reply: { to: r, event: e, note: x }\n",
-		"reply not a mapping":   "endpoints:\n  - path: /a\n    action: event\n    reply: approve\n",
+		"unknown reply key":     "endpoints:\n  - path: /a\n    action: reply\n    reply: { to: r, event: e, note: x }\n",
+		"reply not a mapping":   "endpoints:\n  - path: /a\n    action: reply\n    reply: approve\n",
 		"bad duration":          "daemon: { interval: 2 }\nendpoints: []\n",
 		"go duration":           "limits: { rate_window: 1m30s }\nendpoints: []\n",
 		"duplicate param":       "endpoints:\n  - path: /a\n    message: { machine: m, params: { a: 1, a: 2 } }\n",
@@ -284,7 +284,7 @@ func TestRemovedKey(t *testing.T) {
 			if err == nil {
 				t.Fatal("Parse succeeded")
 			}
-			for _, want := range []string{RemovedKey + " is no longer accepted", "action: event", "reply: { to:", OpenAPIEnv + "=true"} {
+			for _, want := range []string{RemovedKey + " is no longer accepted", "action: reply", "reply: { to:", OpenAPIEnv + "=true"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q does not hold %q", err, want)
 				}

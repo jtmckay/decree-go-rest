@@ -76,12 +76,16 @@ func traceID(traceparent string) string {
 }
 
 // LogRoutes writes one startup record per route: its method, its pattern,
-// its action and, for an emit endpoint, the machine it emits to; then
+// its action and, for an emit or read endpoint, its machine; then
 // /healthz and, when it is on, /openapi.json, with reserved=true (SPEC.md
 // §9).
 func (s *Server) LogRoutes() {
 	for _, e := range s.endpoints {
-		if e.action == config.ActionEvent {
+		if e.action == config.ActionRead {
+			s.Logger.Info("route", "method", http.MethodGet, "route", e.route, "action", e.action, "machine", e.machine)
+			continue
+		}
+		if e.action == config.ActionReply {
 			s.Logger.Info("route", "method", http.MethodPost, "route", e.route, "action", e.action)
 			continue
 		}

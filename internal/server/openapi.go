@@ -37,9 +37,17 @@ func openAPI(c *config.Config) ([]byte, error) {
 		for _, name := range config.PathParams(e.Path) {
 			params = append(params, pathParameter(name, e.ParamPattern(name), MaxParamBytes))
 		}
+		if e.Action == config.ActionRead {
+			for path, ops := range readOperations(c, e, params) {
+				for method, op := range ops {
+					add(path, method, op)
+				}
+			}
+			continue
+		}
 		var op obj
-		if e.Action == config.ActionEvent {
-			op = eventOperation(c, e)
+		if e.Action == config.ActionReply {
+			op = replyOperation(c, e)
 		} else {
 			op = emitOperation(c, e)
 		}
@@ -70,7 +78,7 @@ func openAPI(c *config.Config) ([]byte, error) {
 		Info: obj{
 			"title":       "decree-go-rest",
 			"version":     "1",
-			"description": "The HTTP front door of a decree project: each endpoint queues a decree message, or replies to a run waiting for a person.",
+			"description": "The HTTP front door of a decree project: each endpoint queues a decree message, replies to a run waiting in a reply state, or serves files from one machine's state/ folder, read-only.",
 		},
 		Paths: paths,
 		Components: obj{
@@ -118,16 +126,16 @@ func emitOperation(c *config.Config, e config.Endpoint) obj {
 	return op
 }
 
-// eventOperation is the operation of an event endpoint: it replies to a
-// run waiting in a person state, with the body as the note.
-func eventOperation(c *config.Config, e config.Endpoint) obj {
+// replyOperation is the operation of a reply endpoint: it replies to a
+// run waiting in a reply state, with the body as the note.
+func replyOperation(c *config.Config, e config.Endpoint) obj {
 	var to, event string
 	if e.Reply != nil {
 		to, event = e.Reply.To, e.Reply.Event
 	}
 	op := obj{
-		"summary":     "Reply " + event + " to a run waiting for a person",
-		"description": fmt.Sprintf("Runs `decree event %s %s [-m=<note>] --format json`, with the body as the note. Authenticated with %s.", to, event, secretName(c, e.SecretEnv)),
+		"summary":     "Reply " + event + " to a run waiting in a reply state",
+		"description": fmt.Sprintf("Runs `decree reply %s %s [-m=<note>] --format json`, with the body as the note. Authenticated with %s.", to, event, secretName(c, e.SecretEnv)),
 		"security":    bearer,
 		"responses": obj{
 			"201": jsonResponse("The reply is queued.", ref("Reply")),
@@ -146,6 +154,99 @@ func eventOperation(c *config.Config, e config.Endpoint) obj {
 		op["requestBody"] = textBody(false, fmt.Sprintf("The optional note, passed unchanged, of at most %d bytes.", c.Limits.MaxBodyBytes))
 	}
 	return op
+}
+
+// restPattern is the pattern of the {rest} of a read endpoint: segments
+// of [A-Za-z0-9._-]+, none starting with a dot.
+const restPattern = `^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$`
+
+// fileTypes says which Content-Type a read endpoint serves a file with.
+const fileTypes = "A file's Content-Type follows its extension: .json is application/json; .md text/markdown; .txt, .log, .yml and .yaml text/plain; any other application/octet-stream."
+
+// readOperations are the GET and HEAD operations of a read endpoint, by
+// path: its own path and, without path parameters, <path>/{rest} for what
+// lies below it.
+func readOperations(c *config.Config, e config.Endpoint, params []any) map[string]map[string]obj {
+	var machine, rel string
+	if e.Read != nil {
+		machine, rel = e.Read.Machine, e.Read.Path
+	}
+	where := ".decree/machines/" + machine + "/state/"
+	if rel != "" {
+		where += rel
+	}
+	out := map[string]map[string]obj{
+		e.Path: readPair(c, e, params,
+			"Read "+where+" of machine "+machine,
+			fmt.Sprintf("Serves %s, read-only: a file as it is, a directory as a JSON listing. %s Authenticated with %s.", where, fileTypes, secretName(c, e.SecretEnv))),
+	}
+	if len(params) > 0 {
+		return out
+	}
+	rest := obj{
+		"name":        config.RestParam,
+		"in":          "path",
+		"required":    true,
+		"description": "The path below " + e.Path + ", at any depth: segments separated by /, each matching [A-Za-z0-9._-]+ and not starting with a dot. Anything else is a 400.",
+		"schema":      obj{"type": "string", "pattern": restPattern},
+	}
+	out[e.Path+"/{"+config.RestParam+"}"] = readPair(c, e, []any{rest},
+		"Read below "+where+" of machine "+machine,
+		fmt.Sprintf("Serves the file or directory at {%s} below %s, when that is a directory, read-only. %s Authenticated with %s.", config.RestParam, where, fileTypes, secretName(c, e.SecretEnv)))
+	return out
+}
+
+// readPair is the get and head operations of one path of a read endpoint.
+func readPair(c *config.Config, e config.Endpoint, params []any, summary, description string) map[string]obj {
+	validators := obj{
+		"ETag":          obj{"description": "A strong tag: of a file, the SHA-256 of its content; of a listing, of its bytes.", "schema": obj{"type": "string"}},
+		"Last-Modified": obj{"description": "A file's modification time.", "schema": obj{"type": "string"}},
+		"Cache-Control": obj{"description": "no-cache: revalidate with If-None-Match each time.", "schema": obj{"type": "string"}},
+	}
+	responses := func(head bool) obj {
+		ok := obj{
+			"description": "The file, or the directory's listing. " + fileTypes,
+			"headers":     validators,
+		}
+		partial := obj{"description": "The range of the file that Range asked for."}
+		if !head {
+			binary := obj{"schema": obj{"type": "string", "format": "binary"}}
+			ok["content"] = obj{
+				"application/octet-stream": binary,
+				"application/json":         obj{"schema": obj{"anyOf": []any{ref("Listing"), obj{}}}},
+				"text/markdown":            binary,
+				"text/plain":               binary,
+			}
+			partial["content"] = obj{"application/octet-stream": binary}
+		}
+		return obj{
+			"200": ok,
+			"206": partial,
+			"304": obj{"description": "Not modified: If-None-Match names the current ETag, or If-Modified-Since is not older than the file.", "headers": obj{"ETag": validators["ETag"]}},
+			"400": errorResponse("A parameter outside its pattern, or a path segment that is not [A-Za-z0-9._-]+ or starts with a dot."),
+			"401": errorResponse("A missing or wrong bearer secret."),
+			"404": errorResponse("Nothing there: missing, a name starting with a dot, outside the machine's state/ folder, or neither a regular file nor a directory."),
+			"416": errorResponse("A Range outside the file."),
+			"429": rateLimited,
+			"500": errorResponse("The state folder could not be read."),
+		}
+	}
+	op := func(head bool) obj {
+		o := obj{
+			"summary":     summary,
+			"description": description,
+			"security":    bearer,
+			"responses":   responses(head),
+		}
+		if head {
+			o["summary"] = summary + ", headers only"
+		}
+		if params != nil {
+			o["parameters"] = params
+		}
+		return o
+	}
+	return map[string]obj{"get": op(false), "head": op(true)}
 }
 
 // secretName says which bearer secret an operation whose secret_env is env
@@ -207,6 +308,32 @@ var schemas = obj{
 			"path":  obj{"type": "string", "description": "The queued file, relative to the project: .decree/inbox/<id>.md."},
 			"to":    obj{"type": "string", "description": "The wait id of the run replied to."},
 			"event": obj{"type": "string", "description": "The event sent."},
+		},
+	},
+	"Listing": obj{
+		"type":                 "object",
+		"required":             []any{"path", "items"},
+		"additionalProperties": false,
+		"properties": obj{
+			"path": obj{"type": "string", "description": "The URL path of the directory."},
+			"items": obj{
+				"type":        "array",
+				"description": "The entries, sorted by name, at most 1000. Names starting with a dot are never listed.",
+				"items":       ref("ListingEntry"),
+			},
+			"truncated": obj{"type": "boolean", "description": "Present, and true, when the directory holds more than 1000 entries."},
+		},
+	},
+	"ListingEntry": obj{
+		"type":                 "object",
+		"required":             []any{"name", "type", "modified"},
+		"additionalProperties": false,
+		"properties": obj{
+			"name":     obj{"type": "string"},
+			"type":     obj{"enum": []any{"file", "directory"}},
+			"size":     obj{"type": "integer", "description": "A file's size in bytes."},
+			"modified": obj{"type": "string", "format": "date-time"},
+			"href":     obj{"type": "string", "description": "The URL path to request the entry; a directory's ends in /. Absent from an endpoint with path parameters, which serves nothing below its path."},
 		},
 	},
 	"Health": obj{

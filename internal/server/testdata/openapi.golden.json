@@ -1,14 +1,14 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "description": "The HTTP front door of a decree project: each endpoint queues a decree message, or replies to a run waiting for a person.",
+    "description": "The HTTP front door of a decree project: each endpoint queues a decree message, replies to a run waiting in a reply state, or serves files from one machine's state/ folder, read-only.",
     "title": "decree-go-rest",
     "version": "1"
   },
   "paths": {
     "/approve/{wait_id}": {
       "post": {
-        "description": "Runs `decree event {{wait_id}} approve [-m=<note>] --format json`, with the body as the note. Authenticated with its own bearer secret.",
+        "description": "Runs `decree reply {{wait_id}} approve [-m=<note>] --format json`, with the body as the note. Authenticated with its own bearer secret.",
         "parameters": [
           {
             "in": "path",
@@ -117,7 +117,7 @@
             "bearer": []
           }
         ],
-        "summary": "Reply approve to a run waiting for a person"
+        "summary": "Reply approve to a run waiting in a reply state"
       }
     },
     "/comfy/{type}/{name}": {
@@ -260,6 +260,302 @@
         },
         "security": [],
         "summary": "The daemon's and the config's health"
+      }
+    },
+    "/leases/by-id/{id}": {
+      "get": {
+        "description": "Serves .decree/machines/gpu_lease/state/status/leases/{{id}}.json, read-only: a file as it is, a directory as a JSON listing. A file's Content-Type follows its extension: .json is application/json; .md text/markdown; .txt, .log, .yml and .yaml text/plain; any other application/octet-stream. Authenticated with its own bearer secret.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "pattern": "^(?:[0-9TZ.-]+-[a-f0-9]{6})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Listing"
+                    },
+                    {}
+                  ]
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "text/markdown": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The file, or the directory's listing. A file's Content-Type follows its extension: .json is application/json; .md text/markdown; .txt, .log, .yml and .yaml text/plain; any other application/octet-stream.",
+            "headers": {
+              "Cache-Control": {
+                "description": "no-cache: revalidate with If-None-Match each time.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "description": "A strong tag: of a file, the SHA-256 of its content; of a listing, of its bytes.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Last-Modified": {
+                "description": "A file's modification time.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The range of the file that Range asked for."
+          },
+          "304": {
+            "description": "Not modified: If-None-Match names the current ETag, or If-Modified-Since is not older than the file.",
+            "headers": {
+              "ETag": {
+                "description": "A strong tag: of a file, the SHA-256 of its content; of a listing, of its bytes.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A parameter outside its pattern, or a path segment that is not [A-Za-z0-9._-]+ or starts with a dot."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A missing or wrong bearer secret."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Nothing there: missing, a name starting with a dot, outside the machine's state/ folder, or neither a regular file nor a directory."
+          },
+          "416": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A Range outside the file."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A rate budget is exhausted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the budget's window ends.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The state folder could not be read."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Read .decree/machines/gpu_lease/state/status/leases/{{id}}.json of machine gpu_lease"
+      },
+      "head": {
+        "description": "Serves .decree/machines/gpu_lease/state/status/leases/{{id}}.json, read-only: a file as it is, a directory as a JSON listing. A file's Content-Type follows its extension: .json is application/json; .md text/markdown; .txt, .log, .yml and .yaml text/plain; any other application/octet-stream. Authenticated with its own bearer secret.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "pattern": "^(?:[0-9TZ.-]+-[a-f0-9]{6})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file, or the directory's listing. A file's Content-Type follows its extension: .json is application/json; .md text/markdown; .txt, .log, .yml and .yaml text/plain; any other application/octet-stream.",
+            "headers": {
+              "Cache-Control": {
+                "description": "no-cache: revalidate with If-None-Match each time.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "description": "A strong tag: of a file, the SHA-256 of its content; of a listing, of its bytes.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Last-Modified": {
+                "description": "A file's modification time.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "The range of the file that Range asked for."
+          },
+          "304": {
+            "description": "Not modified: If-None-Match names the current ETag, or If-Modified-Since is not older than the file.",
+            "headers": {
+              "ETag": {
+                "description": "A strong tag: of a file, the SHA-256 of its content; of a listing, of its bytes.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A parameter outside its pattern, or a path segment that is not [A-Za-z0-9._-]+ or starts with a dot."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A missing or wrong bearer secret."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Nothing there: missing, a name starting with a dot, outside the machine's state/ folder, or neither a regular file nor a directory."
+          },
+          "416": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A Range outside the file."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A rate budget is exhausted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the budget's window ends.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The state folder could not be read."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Read .decree/machines/gpu_lease/state/status/leases/{{id}}.json of machine gpu_lease, headers only"
       }
     },
     "/notify": {
@@ -554,6 +850,63 @@
           "ok",
           "daemon",
           "config"
+        ],
+        "type": "object"
+      },
+      "Listing": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "description": "The entries, sorted by name, at most 1000. Names starting with a dot are never listed.",
+            "items": {
+              "$ref": "#/components/schemas/ListingEntry"
+            },
+            "type": "array"
+          },
+          "path": {
+            "description": "The URL path of the directory.",
+            "type": "string"
+          },
+          "truncated": {
+            "description": "Present, and true, when the directory holds more than 1000 entries.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "items"
+        ],
+        "type": "object"
+      },
+      "ListingEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "href": {
+            "description": "The URL path to request the entry; a directory's ends in /. Absent from an endpoint with path parameters, which serves nothing below its path.",
+            "type": "string"
+          },
+          "modified": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "description": "A file's size in bytes.",
+            "type": "integer"
+          },
+          "type": {
+            "enum": [
+              "file",
+              "directory"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "modified"
         ],
         "type": "object"
       },

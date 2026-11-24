@@ -28,9 +28,9 @@ const (
 	DefaultRateMax      = 60
 	DefaultRateFailMax  = 10
 	DefaultBody         = BodyRequired
-	// DefaultEventBody is the body rule of an event endpoint: the body is
+	// DefaultReplyBody is the body rule of a reply endpoint: the body is
 	// an optional note.
-	DefaultEventBody = BodyOptional
+	DefaultReplyBody = BodyOptional
 	DefaultAction    = ActionEmit
 
 	// ListenEnv overrides `listen` when set.
@@ -54,9 +54,11 @@ const (
 const (
 	// ActionEmit queues a new message with `decree emit`.
 	ActionEmit = "emit"
-	// ActionEvent replies to a run waiting in a person state with
-	// `decree event`.
-	ActionEvent = "event"
+	// ActionReply replies to a run waiting in a reply state with
+	// `decree reply`.
+	ActionReply = "reply"
+	// ActionRead serves files from one machine's state/ folder, read-only.
+	ActionRead = "read"
 )
 
 // Config is a loaded decree-go-rest.yml.
@@ -101,25 +103,27 @@ const (
 // Endpoint is one configured endpoint.
 type Endpoint struct {
 	Path string `yaml:"path"`
-	// Action is ActionEmit or ActionEvent.
+	// Action is ActionEmit, ActionReply or ActionRead.
 	Action    string            `yaml:"action"`
 	SecretEnv string            `yaml:"secret_env"`
 	Patterns  map[string]string `yaml:"patterns"`
 	Body      string            `yaml:"body"`
 	// Message is what an emit endpoint queues; nil when the key is absent.
 	Message *Message `yaml:"message"`
-	// Reply is what an event endpoint sends; nil when the key is absent.
+	// Reply is what a reply endpoint sends; nil when the key is absent.
 	Reply *Reply `yaml:"reply"`
+	// Read is what a read endpoint serves; nil when the key is absent.
+	Read *Read `yaml:"read"`
 }
 
 // ParamPattern is the pattern of the path parameter name, unanchored: the
-// endpoint's own, else WaitIDPattern for a parameter an event endpoint
+// endpoint's own, else WaitIDPattern for a parameter a reply endpoint
 // uses in reply.to, else DefaultParamPattern.
 func (e Endpoint) ParamPattern(name string) string {
 	if p, ok := e.Patterns[name]; ok {
 		return p
 	}
-	if e.Action == ActionEvent && e.Reply != nil && placeholderUses(e.Reply.To, name) {
+	if e.Action == ActionReply && e.Reply != nil && placeholderUses(e.Reply.To, name) {
 		return WaitIDPattern
 	}
 	return DefaultParamPattern
@@ -139,13 +143,28 @@ type Message struct {
 	Params  Params `yaml:"params"`
 }
 
-// Reply is what an event endpoint sends: `decree event <to> <event>`.
+// Reply is what a reply endpoint sends: `decree reply <to> <event>`.
 // Both may hold {{name}} placeholders for path parameters.
 type Reply struct {
-	// To is the wait id of the run waiting in a person state.
+	// To is the wait id, or run id, of the run waiting in a reply state.
 	To string `yaml:"to"`
 	// Event is the event the run takes.
 	Event string `yaml:"event"`
+}
+
+// Read is what a read endpoint serves: a file or directory under one
+// machine's state/ folder.
+type Read struct {
+	// Machine is the machine whose state/ folder is served.
+	Machine string `yaml:"machine"`
+	// Path is relative to the state/ folder, "" for the whole folder. It
+	// may hold {{name}} placeholders for path parameters.
+	Path string `yaml:"path"`
+}
+
+// StateDir is the state/ folder of a machine in a project.
+func StateDir(projectDir, machine string) string {
+	return filepath.Join(projectDir, ".decree", "machines", machine, "state")
 }
 
 // Param is one `params` entry, kept in the order of the config.
@@ -267,7 +286,7 @@ const RemovedKey = "built" + "ins"
 
 // removedKeyError names what replaced RemovedKey.
 const removedKeyError = "is no longer accepted: every endpoint is configured. " +
-	"Reply to a run waiting in a person state with an endpoint of `action: event` " +
+	"Reply to a run waiting in a reply state with an endpoint of `action: reply` " +
 	"(its own path, secret_env, patterns and reply: { to: '{{wait_id}}', event: approve }), " +
 	"and serve GET " + OpenAPIPath + " by setting " + OpenAPIEnv + "=true"
 
@@ -297,10 +316,11 @@ func Parse(data []byte) (*Config, error) {
 		if e.Action == "" {
 			e.Action = DefaultAction
 		}
-		if e.Body == "" {
+		// A read endpoint takes no body: validation reports one set.
+		if e.Body == "" && e.Action != ActionRead {
 			e.Body = DefaultBody
-			if e.Action == ActionEvent {
-				e.Body = DefaultEventBody
+			if e.Action == ActionReply {
+				e.Body = DefaultReplyBody
 			}
 		}
 	}

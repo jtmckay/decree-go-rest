@@ -212,7 +212,7 @@ func TestReloadRestartOnlyKeys(t *testing.T) {
 
 	// A second project, valid on its own, with the same machines.
 	other := t.TempDir()
-	for _, m := range []string{"notify", "comfy_image", "flags"} {
+	for _, m := range []string{"notify", "comfy_image", "flags", "gpu_lease"} {
 		raw, err := os.ReadFile(config.MachineFile(f.proj, m))
 		if err != nil {
 			t.Fatal(err)
@@ -254,7 +254,7 @@ func TestReloadRestartOnlyKeys(t *testing.T) {
 func TestReloadRunsDecreeCheckWhenDecreeChanges(t *testing.T) {
 	f := newFixture(t, exampleConfig(t))
 	l := f.live(t)
-	f.stub.SetCheck(t, `{"errors":[{"file":"machines/bad.yml","line":1,"message":"bad","rule":null}],"valid":false,"warnings":[]}`, 1)
+	f.stub.SetCheck(t, `{"errors":[{"file":"machines/bad/machine.yml","line":1,"message":"bad","rule":null}],"valid":false,"warnings":[]}`, 1)
 
 	write(t, f.path, exampleConfig(t)+extraEndpoint)
 	if err := l.Reload(); err != nil {
@@ -323,10 +323,10 @@ func TestReloadRace(t *testing.T) {
 	wg.Wait()
 }
 
-// TestReloadEventSecret: an event endpoint's changed secret_env takes
+// TestReloadReplySecret: a reply endpoint's changed secret_env takes
 // effect on reload, and a reload whose secret is missing keeps the old
 // table.
-func TestReloadEventSecret(t *testing.T) {
+func TestReloadReplySecret(t *testing.T) {
 	f := newFixture(t, exampleConfig(t))
 	captureLogs(f.srv)
 	l := f.live(t)
@@ -335,7 +335,7 @@ func TestReloadEventSecret(t *testing.T) {
 
 	cfg := strings.Replace(exampleConfig(t), "secret_env: DECREE_GO_REST_APPROVE_SECRET", "secret_env: NEW_APPROVE_SECRET", 1)
 	if cfg == exampleConfig(t) {
-		t.Fatal("the example config has no event secret to change")
+		t.Fatal("the example config has no reply secret to change")
 	}
 	write(t, f.path, cfg)
 	if err := l.Reload(); err != nil {

@@ -67,6 +67,7 @@ func TestOpenAPIShape(t *testing.T) {
 		{"/notify/{title}", "post", map[string]string{"title": "^(?:[A-Za-z0-9 _.-]{1,80})$"}, true, "required"},
 		{"/comfy/{type}/{name}", "post", map[string]string{"type": "^(?:[a-z0-9-]+)$", "name": "^(?:[A-Za-z0-9_.-]+)$"}, true, "required"},
 		{"/approve/{wait_id}", "post", map[string]string{"wait_id": "^(?:[A-Za-z0-9._-]{1,128})$"}, true, "optional"},
+		{"/leases/by-id/{id}", "get", map[string]string{"id": "^(?:[0-9TZ.-]+-[a-f0-9]{6})$"}, true, ""},
 		{"/openapi.json", "get", map[string]string{}, false, ""},
 		{"/healthz", "get", map[string]string{}, false, ""},
 	}
@@ -80,7 +81,9 @@ func TestOpenAPIShape(t *testing.T) {
 			continue
 		}
 		o, ok := item[w.method].(map[string]any)
-		if !ok || len(item) != 1 {
+		// A read endpoint has head beside get.
+		read := w.method == "get" && w.auth
+		if !ok || (!read && len(item) != 1) || (read && (len(item) != 2 || item["head"] == nil)) {
 			t.Errorf("%s: operations %v, want only %s", w.path, item, w.method)
 			continue
 		}
@@ -138,18 +141,18 @@ func TestOpenAPIOff(t *testing.T) {
 }
 
 // TestOpenAPIDescribesActions: an emit endpoint is described by the
-// message it queues, an event endpoint by the reply it sends, with the
+// message it queues, a reply endpoint by the reply it sends, with the
 // responses of each.
 func TestOpenAPIDescribesActions(t *testing.T) {
 	f := newFixture(t, exampleConfig(t))
 	_, doc := getOpenAPI(t, f.srv)
 	emit := field(t, doc, "paths./notify/{title}.post").(map[string]any)
-	event := field(t, doc, "paths./approve/{wait_id}.post").(map[string]any)
+	replyOp := field(t, doc, "paths./approve/{wait_id}.post").(map[string]any)
 	if d := emit["description"].(string); !strings.Contains(d, "decree emit --machine notify") {
 		t.Errorf("emit description %q", d)
 	}
-	if d := event["description"].(string); !strings.Contains(d, "decree event {{wait_id}} approve [-m=<note>] --format json") {
-		t.Errorf("event description %q", d)
+	if d := replyOp["description"].(string); !strings.Contains(d, "decree reply {{wait_id}} approve [-m=<note>] --format json") {
+		t.Errorf("reply description %q", d)
 	}
 	codes := func(op map[string]any) string {
 		var out []string
@@ -162,11 +165,11 @@ func TestOpenAPIDescribesActions(t *testing.T) {
 	if got := codes(emit); got != "201 400 401 413 429 500" {
 		t.Errorf("emit responses %s", got)
 	}
-	if got := codes(event); got != "201 400 401 409 413 429 500" {
-		t.Errorf("event responses %s", got)
+	if got := codes(replyOp); got != "201 400 401 409 413 429 500" {
+		t.Errorf("reply responses %s", got)
 	}
-	if ref := field(t, event, "responses.201.content.application/json.schema.$ref"); ref != "#/components/schemas/Reply" {
-		t.Errorf("event 201 schema %v", ref)
+	if ref := field(t, replyOp, "responses.201.content.application/json.schema.$ref"); ref != "#/components/schemas/Reply" {
+		t.Errorf("reply 201 schema %v", ref)
 	}
 	reply := field(t, doc, "components.schemas.Reply.required").([]any)
 	if fmt.Sprint(reply) != "[id path to event]" {

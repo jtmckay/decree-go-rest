@@ -21,7 +21,7 @@ import (
 
 // echoParamsMachine records the run's data, so the test sees the params
 // decree-go-rest queued, as decree typed them.
-const echoParamsMachine = `# yaml-language-server: $schema=../schema/v1/machine.schema.json
+const echoParamsMachine = `# yaml-language-server: $schema=../../schema/v1/machine.schema.json
 name: echo_params
 description: Record the run's DECREE_DATA_* variables and its message.
 initial: record
@@ -45,18 +45,18 @@ cp "$DECREE_MESSAGE" "$DECREE_PROJECT_ROOT/message.md"
 mv "$DECREE_PROJECT_ROOT/params.env.tmp" "$DECREE_PROJECT_ROOT/params.env"
 `
 
-// approvalMachine waits in a person state; its ask script records the
+// approvalMachine waits in a reply state; its notify script records the
 // wait id, and once approved it records the reply it received.
-const approvalMachine = `# yaml-language-server: $schema=../schema/v1/machine.schema.json
+const approvalMachine = `# yaml-language-server: $schema=../../schema/v1/machine.schema.json
 name: approval
-description: Wait for a person's approval, then record the reply.
+description: Wait for an approval, then record the reply.
 initial: ask
 states:
   ask:
     invoke:
-      person:
+      reply:
         question: Approve?
-        ask: ask
+        notify: notify
     transitions:
       approve: { target: approved, description: Go ahead. }
       reject:  { target: failed, description: Stop. }
@@ -67,8 +67,8 @@ states:
   failed: { final: true }
 `
 
-// askScript writes the wait id to wait_id, in the project root.
-const askScript = `#!/bin/sh
+// notifyScript writes the wait id to wait_id, in the project root.
+const notifyScript = `#!/bin/sh
 set -e
 printf '%s' "$DECREE_WAIT_ID" > "$DECREE_PROJECT_ROOT/wait_id.tmp"
 mv "$DECREE_PROJECT_ROOT/wait_id.tmp" "$DECREE_PROJECT_ROOT/wait_id"
@@ -92,7 +92,7 @@ endpoints:
     body: none
     message: { machine: approval }
   - path: /approve/{wait_id}
-    action: event
+    action: reply
     secret_env: DECREE_GO_REST_APPROVE_SECRET
     patterns: { wait_id: '[A-Za-z0-9._-]{1,128}' }
     body: optional
@@ -106,13 +106,14 @@ const E2ETimeout = 30 * time.Second
 
 // TestEndToEnd is SPEC.md §12's end-to-end test: with the real decree and
 // its daemon, a POST becomes a finished run whose script saw the
-// configured params; then a run waiting in a person state is approved
-// through an event endpoint on its own secret, and finishes (the first
-// acceptance criterion of 08). It needs decree on PATH.
+// configured params; then a run waiting in a reply state is approved
+// through a reply endpoint on its own secret, and finishes (the first
+// acceptance criterion of 08, in decree 0.6's terms). It needs decree on
+// PATH.
 func TestEndToEnd(t *testing.T) {
 	decree, err := exec.LookPath("decree")
 	if err != nil {
-		fmt.Println("TestEndToEnd: skipped: decree is not on PATH; install decree 0.5 to run the end-to-end test")
+		fmt.Println("TestEndToEnd: skipped: decree is not on PATH; install decree 0.6 to run the end-to-end test")
 		t.Skip("decree is not on PATH")
 	}
 	// The test may itself run inside a decree run (the gate): its
@@ -138,14 +139,14 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("decree init: %v\n%s", err, out)
 	}
 	write(t, config.MachineFile(proj, "echo_params"), echoParamsMachine)
-	script := filepath.Join(proj, ".decree", "scripts", "echo_params", "record")
+	script := filepath.Join(proj, ".decree", "machines", "echo_params", "scripts", "record")
 	write(t, script, recordScript)
 	if err := os.Chmod(script, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	write(t, config.MachineFile(proj, "approval"), approvalMachine)
-	for name, body := range map[string]string{"ask": askScript, "record": recordReplyScript} {
-		script := filepath.Join(proj, ".decree", "scripts", "approval", name)
+	for name, body := range map[string]string{"notify": notifyScript, "record": recordReplyScript} {
+		script := filepath.Join(proj, ".decree", "machines", "approval", "scripts", name)
 		write(t, script, body)
 		if err := os.Chmod(script, 0o755); err != nil {
 			t.Fatal(err)
@@ -203,7 +204,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("the run's message lacks the body:\n%s", msg)
 	}
 
-	// A run waits in a person state; its ask script records the wait id.
+	// A run waits in a reply state; its notify script records the wait id.
 	resp = do(t, "POST", base+"/start/approval", secret, "")
 	var started struct{ ID string }
 	decodeJSON(t, resp, http.StatusCreated, &started)
@@ -223,7 +224,7 @@ func TestEndToEnd(t *testing.T) {
 	if !strings.HasPrefix(waitID, started.ID+".") {
 		t.Fatalf("wait id %q is not of run %s", waitID, started.ID)
 	}
-	// The ask script writes the wait id before it exits; decree records the
+	// The notify script writes the wait id before it exits; decree records the
 	// wait once it has.
 	for {
 		st := runStatus(t, decree, proj, started.ID)
@@ -236,7 +237,7 @@ func TestEndToEnd(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	// The top-level secret cannot approve it; the event endpoint's own can,
+	// The top-level secret cannot approve it; the reply endpoint's own can,
 	// with a note that starts with -.
 	resp = do(t, "POST", base+"/approve/"+waitID, secret, "Looks good.")
 	resp.Body.Close()

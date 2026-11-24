@@ -38,10 +38,20 @@ endpoints:
 
   # Answering a run's question, such as an approval, deserves its own secret.
   - path: /approve/{wait_id}
-    action: event # reply to a run waiting in a person state
+    action: reply # reply to a run waiting in a reply state
     secret_env: DECREE_GO_REST_APPROVE_SECRET
     patterns: { wait_id: "[A-Za-z0-9._-]{1,128}" }
     body: optional # the note
     reply:
       to: "{{wait_id}}"
       event: approve
+
+  # A lease's status, read-only, from the gpu_lease machine's state/ folder.
+  # Nothing outside .decree/machines/gpu_lease/state/ is reachable.
+  - path: /leases/by-id/{id}
+    action: read # GET and HEAD; never runs decree
+    secret_env: DECREE_GO_REST_READ_SECRET # state/ holds anything the machine writes
+    patterns: { id: "[0-9TZ.-]+-[a-f0-9]{6}" }
+    read:
+      machine: gpu_lease
+      path: "status/leases/{{id}}.json" # under .decree/machines/gpu_lease/state/

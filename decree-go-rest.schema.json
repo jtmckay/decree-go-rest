@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree-go-rest/main/decree-go-rest.schema.json",
   "title": "decree-go-rest.yml",
-  "description": "The config of decree-go-rest, the HTTP front door of a decree 0.5 project (SPEC.md §3). Every key is optional except `endpoints`, each endpoint's `path`, an emit endpoint's `message.machine`, an event endpoint's `reply.to` and `reply.event`, and a resolvable secret. This schema checks the shape; `decree-go-rest -check` checks the rest: that paths do not conflict, patterns compile, placeholders are path parameters, machines and their data exist, secrets are set, and decree runs. GET /openapi.json is switched by the environment variable DECREE_GO_REST_OPENAPI, not by this file.",
+  "description": "The config of decree-go-rest, the HTTP front door of a decree 0.6 project (SPEC.md §3). Every key is optional except `endpoints`, each endpoint's `path`, an emit endpoint's `message.machine`, a reply endpoint's `reply.to` and `reply.event`, a read endpoint's `read.machine`, and a resolvable secret. This schema checks the shape; `decree-go-rest -check` checks the rest: that paths do not conflict, patterns compile, placeholders are path parameters, machines and their data exist, secrets are set, and decree runs. GET /openapi.json is switched by the environment variable DECREE_GO_REST_OPENAPI, not by this file.",
   "type": "object",
   "additionalProperties": false,
   "required": ["endpoints"],
@@ -27,7 +27,7 @@
       "type": "string",
       "minLength": 1,
       "default": "decree",
-      "description": "The decree binary (0.5 or newer): a name on PATH or a path."
+      "description": "The decree binary (0.6.0 or newer): a name on PATH or a path."
     },
     "daemon": {
       "type": "object",
@@ -79,7 +79,7 @@
     "endpoints": {
       "type": "array",
       "minItems": 1,
-      "description": "The endpoints: each turns an authenticated POST into a decree message, written by `decree emit` (action: emit), or into a reply to a run waiting in a person state, sent by `decree event` (action: event).",
+      "description": "The endpoints: each turns an authenticated POST into a decree message, written by `decree emit` (action: emit), or into a reply to a run waiting in a reply state, sent by `decree reply` (action: reply); or serves an authenticated GET from one machine's state/ folder, read-only (action: read).",
       "items": { "$ref": "#/$defs/endpoint" }
     }
   },
@@ -99,19 +99,24 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["path"],
-      "description": "One endpoint: POST <path> emits a message for one machine (action: emit, the default, with `message`), or replies to a run waiting in a person state (action: event, with `reply`).",
-      "if": {
-        "required": ["action"],
-        "properties": { "action": { "const": "event" } }
-      },
-      "then": {
-        "required": ["reply"],
-        "not": { "required": ["message"] }
-      },
-      "else": {
-        "required": ["message"],
-        "not": { "required": ["reply"] }
-      },
+      "description": "One endpoint: POST <path> emits a message for one machine (action: emit, the default, with `message`), or replies to a run waiting in a reply state (action: reply, with `reply`); or GET <path> serves files from one machine's state/ folder, read-only (action: read, with `read`).",
+      "oneOf": [
+        {
+          "properties": { "action": { "const": "emit" } },
+          "required": ["message"],
+          "not": { "anyOf": [{ "required": ["reply"] }, { "required": ["read"] }] }
+        },
+        {
+          "required": ["action", "reply"],
+          "properties": { "action": { "const": "reply" } },
+          "not": { "anyOf": [{ "required": ["message"] }, { "required": ["read"] }] }
+        },
+        {
+          "required": ["action", "read"],
+          "properties": { "action": { "const": "read" } },
+          "not": { "anyOf": [{ "required": ["message"] }, { "required": ["reply"] }, { "required": ["body"] }] }
+        }
+      ],
       "properties": {
         "path": {
           "type": "string",
@@ -120,9 +125,9 @@
           "examples": ["/notify", "/notify/{title}", "/comfy/{type}/{name}", "/approve/{wait_id}"]
         },
         "action": {
-          "enum": ["emit", "event"],
+          "enum": ["emit", "reply", "read"],
           "default": "emit",
-          "description": "`emit` (the default) queues a new message with `decree emit`, and requires `message`. `event` replies to a run waiting in a person state with `decree event`, and requires `reply`. Neither takes the other's key."
+          "description": "`emit` (the default) queues a new message with `decree emit`, and requires `message`. `reply` replies to a run waiting in a reply state with `decree reply`, and requires `reply`. `read` answers GET and HEAD with files from one machine's state/ folder, and requires `read`; it never runs decree. None takes another's key, and `read` takes no `body`."
         },
         "secret_env": {
           "$ref": "#/$defs/envName",
@@ -130,24 +135,24 @@
         },
         "patterns": {
           "type": "object",
-          "description": "A Go RE2 regular expression per path parameter, anchored automatically, replacing the default: `[A-Za-z0-9._-]{1,128}` for a parameter an event endpoint uses in `reply.to` (wait ids contain dots), `[A-Za-z0-9_\\-!]+` for any other. A parameter that does not fully match is a 400, never repaired.",
+          "description": "A Go RE2 regular expression per path parameter, anchored automatically, replacing the default: `[A-Za-z0-9._-]{1,128}` for a parameter a reply endpoint uses in `reply.to` (wait ids contain dots), `[A-Za-z0-9_\\-!]+` for any other. A parameter that does not fully match is a 400, never repaired.",
           "propertyNames": { "pattern": "^\\w+$" },
           "additionalProperties": { "type": "string", "minLength": 1 }
         },
         "body": {
           "enum": ["required", "optional", "none"],
-          "description": "`required` (the default for emit): a blank body is a 400. `optional` (the default for event): an empty body is allowed. `none`: any body is a 400. An emit endpoint's body reaches decree on stdin, as the message body; an event endpoint's is the note, passed unchanged as `-m=<body>`."
+          "description": "`required` (the default for emit): a blank body is a 400. `optional` (the default for reply): an empty body is allowed. `none`: any body is a 400. An emit endpoint's body reaches decree on stdin, as the message body; a reply endpoint's is the note, passed unchanged as `-m=<body>`."
         },
         "message": {
           "type": "object",
           "additionalProperties": false,
           "required": ["machine"],
-          "description": "The message an emit endpoint queues. Not allowed with action: event.",
+          "description": "The message an emit endpoint queues. Not allowed with action: reply.",
           "properties": {
             "machine": {
               "type": "string",
               "pattern": "^[^{}]+$",
-              "description": "The decree machine, `.decree/machines/<name>.yml` in the project. Fixed: a placeholder is not allowed here."
+              "description": "The decree machine, `.decree/machines/<name>/machine.yml` in the project. Fixed: a placeholder is not allowed here."
             },
             "params": {
               "type": "object",
@@ -162,12 +167,12 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["to", "event"],
-          "description": "The reply an event endpoint sends: `decree event <to> <event> [-m=<note>] --format json`, with the body as the note. Not allowed with action: emit. Every path parameter must be used in `to` or `event`.",
+          "description": "The reply a reply endpoint sends: `decree reply <to> <event> [-m=<note>] --format json`, with the body as the note. Not allowed with action: emit. Every path parameter must be used in `to` or `event`.",
           "properties": {
             "to": {
               "type": "string",
               "minLength": 1,
-              "description": "The wait id of the run waiting in a person state, usually a placeholder such as '{{wait_id}}'.",
+              "description": "The wait id, or run id, of the run waiting in a reply state, usually a placeholder such as '{{wait_id}}'.",
               "examples": ["{{wait_id}}"]
             },
             "event": {
@@ -178,6 +183,25 @@
               ],
               "description": "The event the run takes. A literal must match decree's event-name pattern `^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$`; it may instead hold a `{{name}}` placeholder.",
               "examples": ["approve", "reject"]
+            }
+          }
+        },
+        "read": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["machine"],
+          "description": "What a read endpoint serves, read-only: a file or directory under `.decree/machines/<machine>/state/`. A directory is listed as JSON; without path parameters, GET <path>/<rest> serves what lies below it. Nothing outside the machine's state/ folder is reachable, and names starting with a dot are never served or listed. Not allowed with action: emit or reply.",
+          "properties": {
+            "machine": {
+              "type": "string",
+              "pattern": "^[^{}/\\\\.][^{}/\\\\]*$",
+              "description": "The installed machine whose state/ folder is served: `.decree/machines/<machine>/machine.yml` must exist. Fixed: a placeholder is not allowed here."
+            },
+            "path": {
+              "type": "string",
+              "pattern": "^([A-Za-z0-9_-]|\\{\\{\\w+\\}\\})([A-Za-z0-9._-]|\\{\\{\\w+\\}\\})*(/([A-Za-z0-9_-]|\\{\\{\\w+\\}\\})([A-Za-z0-9._-]|\\{\\{\\w+\\}\\})*)*$",
+              "description": "Relative to the state/ folder; by default the whole folder. Segments match `[A-Za-z0-9._-]+` and none starts with a dot. It may hold `{{name}}` placeholders for path parameters, and every path parameter must be used. It need not exist at startup.",
+              "examples": ["status/leases", "status/leases/{{id}}.json", "health.json"]
             }
           }
         }

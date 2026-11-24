@@ -28,8 +28,10 @@ func TestMain(m *testing.M) {
 var (
 	secret      = strings.Repeat("a", 64)
 	comfySecret = strings.Repeat("b", 32)
-	// approveSecret is the own secret of the example's event endpoint.
+	// approveSecret is the own secret of the example's reply endpoint.
 	approveSecret = strings.Repeat("d", 48)
+	// readSecret is the own secret of the example's read endpoint.
+	readSecret = strings.Repeat("r", 40)
 )
 
 const (
@@ -62,6 +64,13 @@ data:
   loud:  { type: bool, default: false }
 states:
   go: { invoke: go, transitions: { done: done } }
+  done: { final: true }
+`
+	leaseMachine = `name: gpu_lease
+description: test machine
+initial: hold
+states:
+  hold: { invoke: hold, transitions: { done: done } }
   done: { final: true }
 `
 )
@@ -111,6 +120,7 @@ func newFixtureWith(t *testing.T, cfg string, opts Options) *fixture {
 	write(t, config.MachineFile(proj, "notify"), notifyMachine)
 	write(t, config.MachineFile(proj, "comfy_image"), comfyMachine)
 	write(t, config.MachineFile(proj, "flags"), flagMachine)
+	write(t, config.MachineFile(proj, "gpu_lease"), leaseMachine)
 	path := filepath.Join(proj, "decree-go-rest.yml")
 	write(t, path, cfg)
 	stub := decreetest.New(t)
@@ -119,6 +129,7 @@ func newFixtureWith(t *testing.T, cfg string, opts Options) *fixture {
 	t.Setenv("DECREE_GO_REST_SECRET", secret)
 	t.Setenv("COMFY_SECRET", comfySecret)
 	t.Setenv("DECREE_GO_REST_APPROVE_SECRET", approveSecret)
+	t.Setenv("DECREE_GO_REST_READ_SECRET", readSecret)
 	c, err := config.Load(path)
 	if err != nil {
 		t.Fatal(err)

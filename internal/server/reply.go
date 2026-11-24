@@ -9,13 +9,13 @@ import (
 	"github.com/jtmckay/decree-go-rest/internal/config"
 )
 
-// replyFailed is the body of every 500 from an event endpoint; the details
+// replyFailed is the body of every 500 from a reply endpoint; the details
 // are logged.
 const replyFailed = "could not queue the reply"
 
-// reply is SPEC.md §4 steps 6–7 for an event endpoint: it runs
+// reply is SPEC.md §4 steps 6–7 for a reply endpoint: it runs
 //
-//	decree event <to> <event> [-m=<note>] --format json
+//	decree reply <to> <event> [-m=<note>] --format json
 //
 // with the placeholders of to and event substituted, and the body as the
 // note. The note is one argv entry, so a note that starts with - is never
@@ -29,7 +29,7 @@ func (s *Server) reply(w http.ResponseWriter, r *http.Request, e *endpoint, valu
 	}
 	to := config.Substitute(e.to, values)
 	event := config.Substitute(e.event, values)
-	args := []string{"event", to, event}
+	args := []string{"reply", to, event}
 	if len(note) > 0 {
 		args = append(args, "-m="+string(note))
 	}
@@ -38,7 +38,7 @@ func (s *Server) reply(w http.ResponseWriter, r *http.Request, e *endpoint, valu
 	fail := func(reason string, attrs ...any) {
 		attrs = append([]any{"route", e.route, "reason", reason,
 			"stderr", strings.TrimSpace(res.stderr.String())}, attrs...)
-		s.Logger.Error("decree event failed", attrs...)
+		s.Logger.Error("decree reply failed", attrs...)
 		writeError(w, http.StatusInternalServerError, replyFailed)
 	}
 	switch {
