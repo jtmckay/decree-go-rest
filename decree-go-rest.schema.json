@@ -152,7 +152,7 @@
             "machine": {
               "type": "string",
               "pattern": "^[^{}]+$",
-              "description": "The decree machine, `.decree/machines/<name>.yml` in the project. Fixed: a placeholder is not allowed here."
+              "description": "The decree machine, `.decree/machines/<name>/machine.yml` in the project. Fixed: a placeholder is not allowed here."
             },
             "params": {
               "type": "object",
