@@ -226,7 +226,7 @@ func readPair(c *config.Config, e config.Endpoint, params []any, summary, descri
 			"400": errorResponse("A parameter outside its pattern, or a path segment that is not [A-Za-z0-9._-]+ or starts with a dot."),
 			"401": errorResponse("A missing or wrong bearer secret."),
 			"404": errorResponse("Nothing there: missing, a name starting with a dot, outside the machine's state/ folder, or neither a regular file nor a directory."),
-			"416": obj{"description": "A Range outside the file."},
+			"416": errorResponse("A Range outside the file."),
 			"429": rateLimited,
 			"500": errorResponse("The state folder could not be read."),
 		}

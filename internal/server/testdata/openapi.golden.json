@@ -384,6 +384,13 @@
             "description": "Nothing there: missing, a name starting with a dot, outside the machine's state/ folder, or neither a regular file nor a directory."
           },
           "416": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
             "description": "A Range outside the file."
           },
           "429": {
@@ -505,6 +512,13 @@
             "description": "Nothing there: missing, a name starting with a dot, outside the machine's state/ folder, or neither a regular file nor a directory."
           },
           "416": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
             "description": "A Range outside the file."
           },
           "429": {
